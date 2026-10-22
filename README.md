@@ -57,7 +57,9 @@ To uninstall: `pip uninstall salvador-spec`.
 The folder [`tutorial/`](tutorial) contains a complete example: a spectrum of the red giant
 1500138 of the globular cluster M54 (GIRAFFE HR18 setup), its parameters, a linelist of 27
 lines and the continuum windows.
+To get the tutorial and the manual, clone the repository or download it as a ZIP.
 
+VERY IMPORTANT
 1. Edit `tutorial/linelist.xkur`: write the paths of the Kurucz atomic and molecular linelists
    on your computer (see Sect. 3.3 of the manual).
 2. Run salvador in the folder:
