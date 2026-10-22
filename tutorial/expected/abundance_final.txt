@@ -1,0 +1,20 @@
+#STAR		= name of the spectrum 
+#CODE		= element code in kurucz format 
+#N_LIN		= number of lines used to compute the mean 
+#ABU		= abundance in the format [Fe/H] or [X/Fe] 
+#ERROR		= total error of ABU. Sum in quadrature of of E_INT + E_PARAM 
+#E_INT		= internal error. Sigma / sqrt(N_LIN) or MC error 
+#E_PARAM	= atmospheric params error. Sum in quadrature of errors due to Teff, logg, and vt 
+#A_ABS		= absolute abundance 
+#E_X/H		= total error of abundance in [X/H] format. Sum in quadrature of of E_X/H_INT + E_X/H_PARAM 
+#E_X/H_INT	= internal error. Sigma / sqrt(N_LIN) or MC error 
+#E_X/H_PARAM	= atmospheric params error. Sum in quadrature of error due to Teff, logg, and vt 
+#--------------------------------------------------------------------------------------------------------------
+#STAR                            CODE  N_LIN    ABU  ERROR  E_INT  E_PARAM     A_ABS   E_XH E_XH_INT E_XH_PARAM
+M54_HR18_1500138                26.00     14  -1.58   0.04   0.04  99.99        5.94   0.04    0.04   99.99
+M54_HR18_1500138                13.00      2   0.80   0.04   0.04  99.99        5.68   0.02    0.02   99.99
+M54_HR18_1500138                19.00      1   0.72   0.04   0.04  99.99        4.25   0.01    0.01   99.99
+M54_HR18_1500138                22.00      2   0.39   0.11   0.11  99.99        3.75   0.10    0.10   99.99
+M54_HR18_1500138                26.01      1  -1.63   0.02   0.02  99.99        5.89   0.02    0.02   99.99
+M54_HR18_1500138                28.00      3  -0.15   0.05   0.05  99.99        4.49   0.02    0.02   99.99
+#---------------------------------------

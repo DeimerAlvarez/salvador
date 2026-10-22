@@ -1,0 +1,18 @@
+cff-version: 1.2.0
+message: "If you use salvador in your research, please cite it as below (a paper is in preparation), together with K2 and the Kurucz codes."
+title: "salvador: chemical abundances of stars by spectral synthesis with the Kurucz codes"
+type: software
+version: 1.0.0
+license: MIT
+repository-code: "https://github.com/DeimerAlvarez/salvador"
+keywords:
+  - astronomy
+  - stellar spectroscopy
+  - chemical abundances
+  - spectral synthesis
+  - globular clusters
+authors:
+  - family-names: "Alvarez Garay"
+    given-names: "Deimer Antonio"
+    orcid: "https://orcid.org/0000-0002-9156-0729"
+    affiliation: "INAF - Osservatorio Astrofisico di Arcetri"

@@ -1,0 +1,6 @@
+OBS	 = obs.list
+NORM	 = 1
+WINDOW	 = 10
+INTER	 = n
+SCLIP	 = 3
+

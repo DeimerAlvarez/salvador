@@ -1,0 +1,64 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "salvador-spec"
+dynamic = ["version"]
+description = "Chemical abundances of stars by spectral synthesis with the Kurucz codes (ATLAS9, SYNTHE) through K2."
+license = "MIT"
+license-files = ["LICENSE"]
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [{ name = "Deimer Antonio Alvarez Garay", email = "deimer.alvarez@inaf.it" }]
+keywords = ["astronomy", "stellar spectroscopy", "chemical abundances", "spectral synthesis", "Kurucz", "SYNTHE"]
+dependencies = [
+    "numpy>=1.24",
+    "scipy>=1.14",
+    "pandas>=1.5",
+    "matplotlib>=3.7",
+    "astropy>=6.0",
+    "specutils>=2.0",
+    "PyAstronomy>=0.20",
+    "pypdf>=3.9",
+]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Operating System :: POSIX :: Linux",
+    "Operating System :: MacOS",
+    "Topic :: Scientific/Engineering :: Astronomy",
+    "Intended Audience :: Science/Research",
+]
+
+[project.urls]
+Homepage = "https://github.com/DeimerAlvarez/salvador"
+Issues = "https://github.com/DeimerAlvarez/salvador/issues"
+K2 = "https://sites.google.com/view/koala-database/software"
+
+[project.optional-dependencies]
+test = ["pytest>=7.4", "pytest-cov"]
+dev = ["salvador-spec[test]"]
+
+[project.scripts]
+salvador = "salvador.cli:main"
+salvador-merge = "salvador.merge_fit:main"
+salvador-regression = "salvador.regression_check:main"
+salvador-check-k2 = "salvador.check_k2_speedup:main"
+
+[tool.setuptools.dynamic]
+version = { attr = "salvador.__version__" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+salvador = ["data/*.txt"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
+filterwarnings = ["ignore:scipy.misc is deprecated:DeprecationWarning"]
+
+[tool.coverage.run]
+source = ["salvador"]
+patch = ["subprocess", "fork"]

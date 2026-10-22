@@ -1,0 +1,11 @@
+#STAR		= name of the spectrum 
+#CODE		= element code in kurucz format 
+#N_LIN		= number of lines used to compute the mean 
+#ISOR		= isotopic ratio 
+#ERROR		= total error of ISOR. Sum in quadrature of of E_INT + E_PARAM 
+#E_INT		= internal error. Sigma / sqrt(N_LIN) or MC error 
+#E_PARAM	= atmospheric params error. Sum in quadrature of error due to Teff, logg, and vt 
+#--------------------------------------------------------------------------------------------------------------
+#STAR                            CODE  N_LIN   ISOR  ERROR  E_INT  E_PARAM
+CS29497-034_C_rv                 6.00      1      5      1      1    999
+#---------------------------------------

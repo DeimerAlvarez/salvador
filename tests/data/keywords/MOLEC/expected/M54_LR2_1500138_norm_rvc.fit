@@ -1,0 +1,8 @@
+#   FLAG =  1  (USED LINE)
+#   FLAG =  0  (REJ. SIGMA-CLIPPING)
+#   FLAG = -1  (REJ. EW)
+#   FLAG = -2  (REJ. E.P.)
+#   FLAG = -3  (REJ. ABU)
+#---------------------------------------
+#SPECTRUM                           LINE   ELEM    ABU      EW      EP  log_gf    eMC  flag_line
+M54_LR2_1500138_norm_rvc        4323.500   6.00   6.22   99.99  99.999  99.999   0.01   1

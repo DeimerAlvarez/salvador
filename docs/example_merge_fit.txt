@@ -1,0 +1,13 @@
+star1_1.fit
+star1_2.fit
+star1.fit
+###
+star2_1.fit
+star2_2.fit
+star2.fit
+###
+star3_1.fit
+star3_2.fit
+star3_3.fit
+star3.fit   -1.5
+

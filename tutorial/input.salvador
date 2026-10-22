@@ -1,0 +1,6 @@
+OBS	 = lista.stars
+NORM	 = 2
+WINDOW	 = 5
+INTER	 = n
+SCLIP	 = 3
+NPROC    = 7

@@ -1,0 +1,5 @@
+#   FLAG =  1  (USED LINE)
+#   FLAG =  0  (REJ. SIGMA-CLIPPING)
+#---------------------------------------
+#SPECTRUM                           LINE   ELEM   ISOR  eMC  flag_line
+CS29497-034_C_rv                4230.300   6.00      5    1   1

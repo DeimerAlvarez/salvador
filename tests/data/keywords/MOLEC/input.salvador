@@ -1,0 +1,7 @@
+OBS	 	= lista.stars
+NORM	 	= 2
+WINDOW	 	= 10
+INTER	 	= y
+SCLIP	 	= 3
+CALC_BEST	= n 
+NPIX_RV		= 0.5

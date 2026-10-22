@@ -1,0 +1,37 @@
+# Python
+__pycache__/
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.coverage
+.ruff_cache/
+.venv/
+
+# outputs of salvador runs (e.g. in tutorial/)
+synth_out/
+tmp_plots/
+salvador_work/
+linelist_cut/
+regression_ref/
+tutorial/*.fit
+tutorial/*.pdf
+tutorial/abundance_final*.txt
+__merged_temp.pdf
+
+# temporary files of K2 and of the Kurucz codes
+input.k2
+xsynthe.sh
+info_ew.txt
+abu_var_k2.tmp
+guess_model*
+input.cog
+output.cog
+single.cog*
+tmp.78
+interpol.*
+xatlas9.sh
+hammer.nb
+iso.tmp
+Abundances_log
+fort.*
