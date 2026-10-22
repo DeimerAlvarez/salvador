@@ -358,18 +358,13 @@ def abu_determination(spec, fit1, fit2, wl_syn, fl_syn_br, abu, line, elem, ans,
     ss = np.array([syn_br2[f'syn_{k}_br2'] for k in range(len(abu))])
     fake = interp_in_abundance(np.array([abu_fin]), abu, ss)[0] # SPEED: vectorized
 
-    # EW determination on the best fit
+    # EW determination on the best fit (used only with a grid of synthetic spectra: with K2 the EW
+    # of the line alone is computed by eqw_k2).
+    # FIX: the synthetic spectra are normalized, so the continuum is 1. Before, the continuum was
+    # the mean flux of the best fit at the two edges of the fit region: with the edges in the wings
+    # of the line or on nearby lines (crowded spectra) the EW was underestimated, or even negative.
     spec_ew = Spectrum(spectral_axis=wl_syn2*u.AA, flux=fake*u.count)
-
-    idx1 = np.argmin(np.abs(spec_ew.spectral_axis.value - fit1))
-    idx2 = np.argmin(np.abs(spec_ew.spectral_axis.value - fit2))
-
-    flux_at_fit1 = spec_ew.flux.value[idx1]
-    flux_at_fit2 = spec_ew.flux.value[idx2]
-
-    cont_level = np.mean([flux_at_fit1, flux_at_fit2])
-
-    EW = equivalent_width(spec_ew, continuum=cont_level, regions=SpectralRegion(fit1 * u.AA, fit2 * u.AA)).value * 1000
+    EW = equivalent_width(spec_ew, continuum=1.0, regions=SpectralRegion(fit1 * u.AA, fit2 * u.AA)).value * 1000
 
 
     # estimate of SNR around each line

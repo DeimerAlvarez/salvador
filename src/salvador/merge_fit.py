@@ -439,6 +439,13 @@ def apply_plot_style(ax, xlabel, ylabel):
         spine.set_linewidth(1.75)
 
 
+def _reduced_ew(df):
+    """log(EW / lambda) of the lines with a positive EW; NaN for the others (EW <= 0 or 99.99),
+    which cannot be shown in the reduced-EW panel."""
+    ok = (df['EW'] > 0) & (df['EW'] != 99.99)
+    return np.log10((df['EW'].where(ok) / 1000) / df['LINE'])
+
+
 def making_plot(abu_file):
     # Plot Gala-like
     column_names = get_header_names(abu_file)
@@ -462,7 +469,7 @@ def making_plot(abu_file):
         # --- Prepare Data for Plotting ---
         
         # 1. Calcoli per Fe I (Sappiamo che esiste)
-        fe_data['reduced_ew'] = np.log10((fe_data['EW'].clip(lower=1e-9)/1000) / fe_data['LINE'])
+        fe_data['reduced_ew'] = _reduced_ew(fe_data)
         used_data = fe_data[fe_data['flag_line'] == 1]
         discarded_data = fe_data[fe_data['flag_line'] != 1]
 
@@ -470,7 +477,7 @@ def making_plot(abu_file):
         has_feii = not feii_data.empty  # Variabile booleana di comodo
         
         if has_feii:
-            feii_data['reduced_ew'] = np.log10((feii_data['EW'].clip(lower=1e-9)/1000) / feii_data['LINE'])
+            feii_data['reduced_ew'] = _reduced_ew(feii_data)
             used_feii = feii_data[feii_data['flag_line'] == 1]
             discarded_feii = feii_data[feii_data['flag_line'] != 1]
         
@@ -495,8 +502,6 @@ def making_plot(abu_file):
         
         # Filtro per EP (escludendo i valori 99.999)
         valid_ep = all_data_limits[all_data_limits['EP'] != 99.999]['EP']
-        minx2 = valid_ep.min()
-        maxx2 = valid_ep.max()
         
         # --- Create the 3-Panel Plot ---
         fig, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize=(12, 6.75), sharey=True)
@@ -526,29 +531,38 @@ def making_plot(abu_file):
         ax1.legend(fontsize=7)
         
         # --- Panel 2: EP ---
-        # Fit FeI
-        if len(used_data['LINE']) >= 3:
-            y_fit2, m2, c2, em2, ec2 = get_coeffs(used_data['EP'], used_data['ABU'])
-            ax2.plot(used_data['EP'].to_numpy(), y_fit2.to_numpy(), c='red', label=rf'$y = ({m2:.2f} \pm {em2:.2f})x + ({c2:.2f} \pm {ec2:.2f})$')
+        # FIX: only the lines with a known EP (99.999 = not available, e.g. with a grid of synthetic
+        # spectra): before, the axis limits were NaN and the plot was not created
+        def known_ep(df):
+            return df[df['EP'] != 99.999]
+        used_ep = known_ep(used_data)
+        if len(used_ep) >= 3 and used_ep['EP'].nunique() > 1:
+            y_fit2, m2, c2, em2, ec2 = get_coeffs(used_ep['EP'], used_ep['ABU'])
+            ax2.plot(used_ep['EP'].to_numpy(), y_fit2.to_numpy(), c='red', label=rf'$y = ({m2:.2f} \pm {em2:.2f})x + ({c2:.2f} \pm {ec2:.2f})$')
 
         # Plot Fe I
-        ax2.scatter(discarded_data['EP'].to_numpy(), discarded_data['ABU'].to_numpy(), color='gray', alpha=0.5, lw=0.35)
-        ax2.scatter(used_data['EP'].to_numpy(), used_data['ABU'].to_numpy(), color='blue', ec='k', lw=0.35)
+        ax2.scatter(known_ep(discarded_data)['EP'].to_numpy(), known_ep(discarded_data)['ABU'].to_numpy(), color='gray', alpha=0.5, lw=0.35)
+        ax2.scatter(used_ep['EP'].to_numpy(), used_ep['ABU'].to_numpy(), color='blue', ec='k', lw=0.35)
         
         # Plot Fe II (SOLO SE ESISTE)
         if has_feii:
-            ax2.scatter(discarded_feii['EP'].to_numpy(), discarded_feii['ABU'].to_numpy(), color='lightcoral', marker='^', alpha=0.5, lw=0.35)
-            ax2.scatter(used_feii['EP'].to_numpy(), used_feii['ABU'].to_numpy(), color='red', ec='k', marker='^', lw=0.35)
+            ax2.scatter(known_ep(discarded_feii)['EP'].to_numpy(), known_ep(discarded_feii)['ABU'].to_numpy(), color='lightcoral', marker='^', alpha=0.5, lw=0.35)
+            ax2.scatter(known_ep(used_feii)['EP'].to_numpy(), known_ep(used_feii)['ABU'].to_numpy(), color='red', ec='k', marker='^', lw=0.35)
 
-        ax2.set_xlim(minx2 - 0.2, maxx2 + 0.2)
+        if valid_ep.empty:
+            ax2.text(0.5, 0.5, 'EP not available', transform=ax2.transAxes, ha='center', va='center')
+        else:
+            ax2.set_xlim(valid_ep.min() - 0.2, valid_ep.max() + 0.2)
         apply_plot_style(ax2, 'Excitation Potential [eV]', '')
-        ax2.legend(fontsize=7)
+        if ax2.get_legend_handles_labels()[0]:
+            ax2.legend(fontsize=7)
         
         # --- Panel 3: Reduced EW ---
         # Fit FeI
-        if len(used_data['LINE']) >= 3:
-            y_fit3, m3, c3, em3, ec3 = get_coeffs(used_data['reduced_ew'], used_data['ABU'])
-            ax3.plot(used_data['reduced_ew'].to_numpy(), y_fit3.to_numpy(), c='red', label=rf'$y = ({m3:.2f} \pm {em3:.2f})x + ({c3:.2f} \pm {ec3:.2f})$')
+        used_ewr = used_data.dropna(subset=['reduced_ew'])
+        if len(used_ewr) >= 3 and used_ewr['reduced_ew'].nunique() > 1:
+            y_fit3, m3, c3, em3, ec3 = get_coeffs(used_ewr['reduced_ew'], used_ewr['ABU'])
+            ax3.plot(used_ewr['reduced_ew'].to_numpy(), y_fit3.to_numpy(), c='red', label=rf'$y = ({m3:.2f} \pm {em3:.2f})x + ({c3:.2f} \pm {ec3:.2f})$')
 
         # Plot Fe I
         ax3.scatter(discarded_data['reduced_ew'].to_numpy(), discarded_data['ABU'].to_numpy(), color='gray', alpha=0.5, lw=0.35)
@@ -564,7 +578,7 @@ def making_plot(abu_file):
             ew_series_list.extend([used_feii['reduced_ew'], discarded_feii['reduced_ew']])
             
         # --- CALCOLO MIN E MAX ---
-        all_ew = pd.concat(ew_series_list)
+        all_ew = pd.concat(ew_series_list).dropna()
         
         if not all_ew.empty:
             ewr_min = all_ew.min()
@@ -574,7 +588,8 @@ def making_plot(abu_file):
         
         ax3.set_xlim(ewr_min - 0.1, ewr_max + 0.1)
         apply_plot_style(ax3, r'log(EW / $\lambda$)', '')
-        ax3.legend(fontsize=7)
+        if ax3.get_legend_handles_labels()[0]:
+            ax3.legend(fontsize=7)
         
         # --- Finalization ---
         plt.subplots_adjust(left=0.07, right=0.98, bottom=0.25, top=0.75, wspace=0.1)

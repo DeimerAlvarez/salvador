@@ -823,7 +823,8 @@ def run() -> None:
                     ax2.scatter(discarded_feii['EP'].to_numpy(), discarded_feii['ABU'].to_numpy(), color='lightcoral', marker='^', alpha=0.5, lw=0.35)
                     ax2.scatter(used_feii['EP'].to_numpy(), used_feii['ABU'].to_numpy(), color='red', ec='k', marker='^', lw=0.35)
 
-                ax2.set_xlim(minx2 - 0.2, maxx2 + 0.2)
+                if np.isfinite(minx2) and np.isfinite(maxx2):     # FIX: no EP available (all 99.999)
+                    ax2.set_xlim(minx2 - 0.2, maxx2 + 0.2)
                 apply_plot_style(ax2, 'Excitation Potential [eV]', '')
                 if ax2.get_legend_handles_labels()[0]:  # legend only if there is a fit (>= 3 lines)
                     ax2.legend(fontsize=7)

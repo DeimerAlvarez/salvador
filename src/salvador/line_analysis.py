@@ -21,6 +21,21 @@ def _rejected_result():
     """Result of a line that could not be measured (out of limit, or no usable synthetics)."""
     return {"abu_fin": 99.99, "answer": 'y', "ew_k2": 99.99, "snr": 0, "abu_err_mc": 99.99, "abu0": 99.99, "EP": 99.999, "loggf": 99.999}
 
+def _at_grid_edge(abu_fin: float, abu, chi, tana: str) -> bool:
+    """True if the chi2 minimum is at the first or the last abundance of the grid of synthetic
+    spectra (PATH_SYN), where the real minimum may be outside the grid.
+
+    Args:
+        abu_fin: Abundance (or isotopic ratio) found.
+        abu: Abundances of the synthetic spectra of the grid, increasing.
+        chi: chi2 on the fine grid between the synthetics around the minimum.
+        tana: Keyword of the line (fine step 1 for ISOR, 0.01 dex otherwise).
+    """
+    step = 1.0 if tana == 'ISOR' else 0.01
+    k = int(np.argmin(chi))
+    return bool((k == 0 and abu_fin - abu[0] < step / 2) or (k == len(chi) - 1 and abu[-1] - abu_fin < 1.5 * step))
+
+
 ### SPEED: cache of the NORM = 2 reference synthetic (whole spectral range), see measure_line
 _norm2_syn_cache = {}
 
@@ -623,6 +638,16 @@ def measure_line(wvl, flux, sss, fit1, fit2, elem, param1, name_star, abu, wv_le
         return rotation_result('y')
 
     elif cfg.inter == 'n' and cfg.grid == 'y' and tana.startswith(ABU_KEYS):    # FIX: ISOR was missing (function returned None)
+        # CHECK: with the chi2 minimum at the first or last abundance of the grid, the real minimum
+        # may be outside the grid: the line is rejected, as 'Out of limit' in the automatic mode with K2
+        if _at_grid_edge(abu_fin, abu, chi, tana):
+            plot_data.update({"abu_fin": 99.99})
+            plotter.update(plot_data)
+            if save_flag == 'y':
+                save_line_plot()
+            print('---')
+            print(f'Minimum of the chi2 at the edge of the grid of synthetic spectra ({abu[0]:.2f} - {abu[-1]:.2f}): line rejected\n')
+            return _rejected_result()
         if save_flag == 'y':
             save_line_plot()
         ew_k2, EP, loggf, abu_err_mc = final_ew_and_mc()

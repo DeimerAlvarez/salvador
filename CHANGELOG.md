@@ -1,6 +1,26 @@
 # Changelog
 
-## 1.0.0 (unreleased)
+## 1.0.1
+
+### Fixed
+
+* Grid of synthetic spectra (`PATH_SYN`): the EW of a line, measured on the best-fit synthetic,
+  used as continuum the flux at the two edges of the fit region, so it was underestimated and could
+  be negative (edges in the wings of the line or on nearby lines). The synthetic spectra are
+  normalized: the continuum is now 1. On the tutorial the EWs agree with those of K2 within a few
+  per cent.
+* `salvador-merge`: the Fe plot was not created, with the error "Axis limits cannot be NaN or Inf",
+  when the excitation potentials were not available (results of a grid run); lines with a negative
+  or null EW are left out of the reduced-EW panel.
+* The Fe plot of `salvador` no longer stops the run if no excitation potential is available.
+
+### Changed
+
+* Grid of synthetic spectra, automatic mode: a line whose χ² minimum is at the first or the last
+  abundance of the grid is rejected (abundance 99.99, flag −3), because the real minimum may be
+  outside the grid, as the lines "out of limit" in the automatic mode with K2.
+
+## 1.0.0
 
 First public release: the scripts `salvador.py`, `utilities_salvador.py` and `salvador_lib/` become
 the installable package `salvador` (`pip install salvador-spec`). The analysis is unchanged: on the
