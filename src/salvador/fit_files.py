@@ -209,3 +209,37 @@ def get_header_names(file_path):
     # Clean the header row: remove '#' and extra spaces, then split
     column_names = header_line.lstrip('#').strip().split()
     return column_names
+
+
+def replace_flag_column(abu_file_path, flag_abu):
+    """Replace the flag (last column) of each data row of a .fit file, in order (salvador-merge).
+    Nothing is written if the number of flags differs from the number of data rows."""
+    try:
+        with open(abu_file_path, 'r') as f:
+            lines = f.readlines()
+    except FileNotFoundError:
+        print(f"Error: file {abu_file_path} not found.")
+        return
+
+    num_data_rows = sum(1 for line in lines if line.strip() and not line.strip().startswith('#'))
+    if len(flag_abu) != num_data_rows:
+        print(f"Error: number of flags ({len(flag_abu)}) not corresponds to the number of line data ({num_data_rows})!")
+        return
+
+    new_lines, k = [], 0
+    for line in lines:
+        stripped = line.strip()
+        if not stripped:
+            new_lines.append('\n')
+        elif stripped.startswith('#'):
+            new_lines.append(line)
+        else:
+            parts = stripped.split()
+            parts[-1] = str(int(flag_abu[k]))
+            new_lines.append("\t".join(parts) + "\n")
+            k += 1
+    try:
+        with open(abu_file_path, 'w') as f:
+            f.writelines(new_lines)
+    except OSError as e:
+        print(f"Error writing file: {e}")

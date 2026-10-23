@@ -21,6 +21,7 @@ from salvador.config import Config, cfg
 
 TESTS = Path(__file__).resolve().parent
 SUBSET = TESTS / 'data' / 'tutorial_subset'
+EXPECTED_SUBSET = SUBSET / 'expected'
 KEYWORDS = TESTS / 'data' / 'keywords'
 FAKE_K2 = TESTS / 'fake_k2'
 

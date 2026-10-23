@@ -5,7 +5,7 @@ import numpy as np
 import pytest
 
 from salvador.fitting import _estimate_snr, abu_mc_line, gaussian, gaussian_cf, interp_in_abundance, mc_seed
-from salvador.normalization import find_clipped_regions, load_cw_regions, merge_overlapping_regions, norm2
+from salvador.normalization import find_clipped_regions, load_cw_regions, norm2
 from salvador.summary import extract_abu, extract_abu_fe, extract_abu_isor, get_coeffs
 
 RNG = np.random.default_rng(42)
@@ -78,12 +78,6 @@ def test_mc_error_is_reproducible_and_sensible():
 
 
 # ------------------------------------------------------------------------- normalization
-def test_merge_overlapping_regions():
-    left, right = merge_overlapping_regions([5, 1, 2, 10], [6, 3, 4, 11])
-    assert left.tolist() == [1, 5, 10] and right.tolist() == [4, 6, 11]
-    assert merge_overlapping_regions([], [])[0].size == 0
-
-
 def test_load_cw_regions(tmp_path):
     path = tmp_path / 'cw.txt'
     path.write_text('7500 7502\n7450 7452\n7500 7502\n7451 7455\n')

@@ -91,15 +91,12 @@ class PlotManager:
 
         # --- Fixed settings of ax2, depending on 'tana' ---
         format_axes(self.ax2)
-        if self.tana in ['ABU', 'ABU2', 'ABUF', 'ABU_GF', 'ISOR']:
+        if self.tana in ['ABU', 'ABU2', 'ABUF', 'ABU_GF', 'ISOR', 'MOLEC']:     # FIX: MOLEC had no labels
             if self.tana == 'ISOR':
                 self.ax2.set_xlabel('Isotopic ratio', fontsize=15)
             else:
                 self.ax2.set_xlabel('Abu', fontsize=15)
             self.ax2.set_ylabel(r'$\chi^2$', fontsize=15)
-            # EMPTY scatter elements
-            self.scatter_chi_curva = self.ax2.scatter([], [], c='r', s=30, ec='k', lw=0.5)
-            self.scatter_chi_minimo = self.ax2.scatter([], [], c='b', s=40, ec='k', lw=0.5, zorder=3)
         elif self.tana == 'ROTAT':
             self.ax2.set_xlabel('Rotational Velocity [km/s]', fontsize=15)
             self.ax2.set_ylabel('Abundance [dex]', fontsize=15)
@@ -384,3 +381,117 @@ class PlotManager:
         """Close the plot window."""
         plt.ioff()
         plt.close(self.fig)
+
+
+### =============================================================================================
+### Fe diagnostic plot (salvador and salvador-merge)
+### =============================================================================================
+def _reduced_ew(df):
+    """log(EW / lambda) of the lines with a positive EW; NaN for the others (EW <= 0 or 99.99),
+    which cannot be shown in the reduced-EW panel."""
+    ok = (df['EW'] > 0) & (df['EW'] != 99.99)
+    return np.log10((df['EW'].where(ok) / 1000) / df['LINE'])
+
+
+def fe_diagnostic_plot(fit_file, pdf_file, ewr_range=None) -> bool:
+    """Fe I (and Fe II) abundances of a .fit file against wavelength, excitation potential and
+    reduced EW, with linear fits of the Fe I lines used (3 or more). The same plot for salvador
+    and salvador-merge (before, two versions of it).
+
+    Args:
+        fit_file: .fit file with the flag column (flag_line).
+        pdf_file: Name of the PDF to write.
+        ewr_range: (min, max) of the reduced-EW axis (salvador: EWR_MIN, EWR_MAX); None: from the data.
+
+    Returns:
+        True if the plot was written (there are Fe I lines with an abundance).
+    """
+    import pandas as pd
+    from .fit_files import get_header_names
+    from .summary import get_coeffs
+
+    column_names = get_header_names(fit_file)
+    if not column_names:
+        print("No column names.")
+        return False
+    data = pd.read_csv(fit_file, sep=r"\s+", comment='#', header=None, names=column_names)
+    if data.empty or not {'ELEM', 'ABU', 'LINE', 'EW', 'EP', 'flag_line'} <= set(data.columns):
+        return False
+
+    fe_data = data[(data['ELEM'] == 26.00) & (data['ABU'] != 99.99)].copy()
+    feii_data = data[(data['ELEM'] == 26.01) & (data['ABU'] != 99.99)].copy()
+    if fe_data.empty:       # without Fe I nothing can be done
+        return False
+
+    fe_data['reduced_ew'] = _reduced_ew(fe_data)
+    used_data = fe_data[fe_data['flag_line'] == 1]
+    discarded_data = fe_data[fe_data['flag_line'] != 1]
+    has_feii = not feii_data.empty
+    if has_feii:
+        feii_data['reduced_ew'] = _reduced_ew(feii_data)
+        used_feii = feii_data[feii_data['flag_line'] == 1]
+        discarded_feii = feii_data[feii_data['flag_line'] != 1]
+    all_data = pd.concat([fe_data, feii_data]) if has_feii else fe_data
+
+    def known_ep(df):
+        """Lines with a known excitation potential (99.999 = not available, e.g. grid)."""
+        return df[df['EP'] != 99.999]
+
+    def fit_line(ax, x, y, fmt_m, fmt_c):
+        """Linear fit, only with 3 or more points and more than one x value."""
+        if len(x) >= 3 and x.nunique() > 1:
+            y_fit, m, c, em, ec = get_coeffs(x, y)
+            ax.plot(x.to_numpy(), y_fit.to_numpy(), c='red',
+                    label=rf'$y = ({m:{fmt_m}} \pm {em:{fmt_m}})x + ({c:{fmt_c}} \pm {ec:{fmt_c}})$')
+
+    def scatter(ax, column, used, discarded, used_ii=None, discarded_ii=None, labels=False):
+        """Fe I (used: blue, discarded: grey) and Fe II (triangles)."""
+        ax.scatter(discarded[column].to_numpy(), discarded['ABU'].to_numpy(), color='gray', alpha=0.5, lw=0.35,
+                   label='Discarded' if labels else None)
+        ax.scatter(used[column].to_numpy(), used['ABU'].to_numpy(), color='blue', ec='k', lw=0.35,
+                   label='Used' if labels else None)
+        if used_ii is not None:
+            ax.scatter(discarded_ii[column].to_numpy(), discarded_ii['ABU'].to_numpy(), color='lightcoral', marker='^', alpha=0.5, lw=0.35)
+            ax.scatter(used_ii[column].to_numpy(), used_ii['ABU'].to_numpy(), color='red', ec='k', marker='^', lw=0.35,
+                       label='Fe II' if labels else None)
+
+    fig, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize=(12, 6.75), sharey=True)
+
+    # --- Panel 1: wavelength
+    fit_line(ax1, used_data['LINE'], used_data['ABU'], '.3f', '.2f')
+    scatter(ax1, 'LINE', used_data, discarded_data, *((used_feii, discarded_feii) if has_feii else ()), labels=True)
+    ax1.set_ylim(all_data['ABU'].min() - 0.2, all_data['ABU'].max() + 0.2)
+    ax1.set_xlim(all_data['LINE'].min() - 50, all_data['LINE'].max() + 50)
+    apply_plot_style(ax1, r'Wavelength [$\AA$]', 'A(Fe)')
+    ax1.legend(fontsize=7)
+
+    # --- Panel 2: excitation potential (only the lines where it is known)
+    used_ep = known_ep(used_data)
+    fit_line(ax2, used_ep['EP'], used_ep['ABU'], '.2f', '.2f')
+    scatter(ax2, 'EP', used_ep, known_ep(discarded_data),
+            *((known_ep(used_feii), known_ep(discarded_feii)) if has_feii else ()))
+    valid_ep = known_ep(all_data)['EP']
+    if valid_ep.empty:
+        ax2.text(0.5, 0.5, 'EP not available', transform=ax2.transAxes, ha='center', va='center')
+    else:
+        ax2.set_xlim(valid_ep.min() - 0.2, valid_ep.max() + 0.2)
+    apply_plot_style(ax2, 'Excitation Potential [eV]', '')
+    if ax2.get_legend_handles_labels()[0]:
+        ax2.legend(fontsize=7)
+
+    # --- Panel 3: reduced EW (only the lines with a positive EW)
+    used_ewr = used_data.dropna(subset=['reduced_ew'])
+    fit_line(ax3, used_ewr['reduced_ew'], used_ewr['ABU'], '.2f', '.2f')
+    scatter(ax3, 'reduced_ew', used_data, discarded_data, *((used_feii, discarded_feii) if has_feii else ()))
+    if ewr_range is None:
+        all_ewr = all_data['reduced_ew'].dropna()
+        ewr_range = (all_ewr.min(), all_ewr.max()) if not all_ewr.empty else (-6.0, -4.4)
+    ax3.set_xlim(ewr_range[0] - 0.1, ewr_range[1] + 0.1)
+    apply_plot_style(ax3, r'log(EW / $\lambda$)', '')
+    if ax3.get_legend_handles_labels()[0]:
+        ax3.legend(fontsize=7)
+
+    plt.subplots_adjust(left=0.07, right=0.98, bottom=0.25, top=0.75, wspace=0.1)
+    fig.savefig(pdf_file)
+    plt.close(fig)
+    return True

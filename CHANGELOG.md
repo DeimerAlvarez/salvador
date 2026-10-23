@@ -1,5 +1,58 @@
 # Changelog
 
+## 1.1.0
+
+### Fixed
+
+* Errors due to the atmospheric parameters:
+  * they keep their sign (result with the parameter increased − nominal result). The errors of
+    [X/Fe] take into account species that change in the opposite way to Fe I (e.g. ionized
+    species); before, with absolute values, they were underestimated for those species. The
+    d_Teff, d_logg and d_vt columns of the `.fit` files can now be negative.
+  * a changed fit that could not be measured (99.99) no longer enters the mean of the species
+    (one line in four gave an error of 25 dex); the errors that depend on a missing value are 99.99.
+  * a line rejected in the interactive mode (`r`) has the three error columns (99.99), so all the
+    rows of the `.fit` file have the same columns.
+* Grid of synthetic spectra (`PATH_SYN`):
+  * the parameter errors were always 0.00 (the nominal synthetics were used again). The synthetics
+    with Teff + ΔT, logg + Δlogg, vt + Δvt are taken from the grid; without them the error is 99.99
+    with a message.
+  * only the synthetics with the [M/H] and the alpha-enhancement of the star are used (before,
+    spectra of different model atmospheres were mixed); if a line is in more than one wavelength
+    range of the grid, one range is used.
+* Names of the synthetic spectra in `synth_out/`: a change of log gf (`ABU_GF`, `GF`) and a change of
+  abundance had the same name, and the ISOR (and ISOF) rows of the abundance-variation file were not
+  in the name, so synthetics computed with another isotopic ratio were reused. The names of the
+  synthetics with only DELTA and ABS rows are unchanged (they are still reused).
+* `ISOR`: a rejected line was written as 100 and entered the mean ratio; it is now 99.99 with flag −3.
+* Pixels with NaN or infinite values in the observed spectrum are not used (before, the run
+  stopped, or the abundance was searched in the wrong direction).
+* Spectra given with a folder or with dots in the name (`./star.fits`, `../data/star.v2.fits`): the
+  results are named after the spectrum (`star.fit`, `star.v2.fit`) in the working folder; before,
+  `.fit` and `.pdf` (empty name) or a crash with K2.
+* An unexpected error in a line skips that line with a message (before, the whole run stopped); the
+  run stops after 3 lines in a row stopped by an error.
+* Interactive mode: `i` restores the spectrum of the first fit, with the local RV correction; `dw`
+  accepts only the number of a window and keeps at least 2 windows; `aw`, `res` and `c` accept only
+  valid values; the χ² panel of MOLEC lines has its labels.
+* `salvador-merge`: with an external [Fe/H] and parameter errors, all the errors of [X/Fe] were 99.99:
+  the error of the external [Fe/H] is now used (third column of the list file, or asked); without
+  Fe I lines and without an external [Fe/H], [X/Fe] is 99.99 (before, meaningless values); `.fit`
+  files with and without parameter errors can be merged; the EW limits are not applied to lines
+  without an EW (molecules).
+
+### Changed
+
+* The error due to logg is computed also for `MOLEC` and `ABU2` lines (not only for ionized species).
+* The lines are analysed in order of wavelength: the rows of the `.fit` files and the pages of the PDF
+  are in order of wavelength (before: in the order of the linelist and of the file names).
+* `salvador-merge` uses the same functions as `salvador` for the abundances, the errors and the Fe
+  plot (before, a copy of them): the two programs give the same numbers. The settings can be given on
+  the command line (`--solar`, `--flags`, `--sclip`, `--ep`, `--ewr`); the missing ones are asked, and
+  wrong choices are refused.
+* Warnings: when the linelists changed since the synthetic spectra of `synth_out/` were computed (they
+  would be reused), and when all the continuum windows near a line (`NORM = 2`) are on one side of it.
+
 ## 1.0.1
 
 ### Fixed

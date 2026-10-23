@@ -9,29 +9,28 @@ import argparse
 import importlib.metadata
 import multiprocessing
 import os
+import re
 import shutil
 import sys
 import time
+import traceback
 from collections import Counter
 from pathlib import Path
 
 import numpy as np
-import pandas as pd
 from pypdf import PdfWriter
 
 from . import __version__
 from .config import WORK_DIR, c, cfg, configure_warnings, path_tmp, patterns_to_delete, plt, select_backend
-from .elements import abu_absolute, define_abu0, get_element_symbol, solar_table_path, strip_ion, symbol_map
-from .fit_files import (add_errors_to_file, append_flag_column, check_if_has_data, count_header_cols,
-                        get_header_names, read_fit_file)
-from .k2_interface import autok, cleanup_linelist_cut
+from .elements import define_abu0, get_element_symbol, solar_table_path, strip_ion, symbol_map
+from .fit_files import add_errors_to_file, append_flag_column, check_if_has_data, count_header_cols, read_fit_file
+from .k2_interface import autok, check_synth_out_linelists, cleanup_linelist_cut
 from .line_analysis import ABU_KEYS, measure_line
 from .normalization import find_clipped_regions, load_cw_regions
 from .parallel import cleanup_parallel_work, ensure_models, init_parallel_worker, parallel_available
-from .plotting import apply_plot_style
-from .spectra_io import (cleaning_tmp_files, grid_name_fields, grid_name_matches, is_line_in_grid,
-                         process_names_grid, read_spec)
-from .summary import extract_abu, extract_abu_fe, extract_abu_isor, get_coeffs
+from .plotting import fe_diagnostic_plot
+from .spectra_io import cleaning_tmp_files, model_name_codes, read_spec, select_grid_synthetics
+from .summary import extract_abu_isor, star_abundance_rows
 
 ###
 ### ANALYSIS OF ONE LINE
@@ -42,12 +41,40 @@ from .summary import extract_abu, extract_abu_fe, extract_abu_isor, get_coeffs
 STAR = {}       # star-level data, filled for each star in the main loop
 curr_path = Path.cwd()  # working directory of the run (set by run())
 start_time = time.time()    # start of the run (set by run()): only newer temporary files are deleted
+MAX_FAILURES = 3    # the run stops after this number of lines in a row stopped by an error
 
 def analyse_line(task):
+    """Analysis of one line (see _analyse_line). NEW: an unexpected error stops only this line,
+    which is skipped with a message (before, it stopped the whole run, with all the stars); the
+    run stops after MAX_FAILURES lines in a row stopped by an error (see run)."""
+    try:
+        return _analyse_line(task)
+    except Exception as e:     # noqa: BLE001 -- any error of one line; KeyboardInterrupt still stops
+        line = float(task[1])
+        print(f'---\nLine {line:.3f}: the analysis stopped with an error ({type(e).__name__}: {e})')
+        traceback.print_exc(file=sys.stdout)
+        plt.close('all')
+        return {'line': line, 'nelem': task[2], 'tana': task[0], 'elem': get_element_symbol(task[2], symbol_map),
+                'skipped': True, 'failed': True, 'reason': f'error ({type(e).__name__}: {e})',
+                'flag': 0, 'errors': None, 'Abu': 99.99}
+
+
+def _norm2_window_warning(line: float, w_left: np.ndarray, w_right: np.ndarray) -> None:
+    """NORM = 2: warn when all the continuum windows within +-50 A are on one side of the line,
+    so that the continuum at the line is extrapolated."""
+    if len(w_left) == 0:
+        return
+    for side, present in (('left', np.any(np.asarray(w_left) < line)), ('right', np.any(np.asarray(w_right) > line))):
+        if not present:
+            print(f'WARNING: line {line:.3f}: no continuum window within 50 A on the {side} side of the line: '
+                  f'the continuum at the line is extrapolated')
+
+
+def _analyse_line(task):
     """Analysis of one line of the linelist: nominal fit (measure_line) and, if the star has the
-    parameter errors, the fits with Teff + dTeff, logg + dlogg (ionized species) and vt + dvt
-    (EW > 50 mA). Returns a dictionary with the results; writes nothing (see write_line_result),
-    so it can run in parallel workers."""
+    parameter errors, the fits with Teff + dTeff, logg + dlogg (ionized species, MOLEC and ABU2)
+    and vt + dvt (EW > 50 mA). Returns a dictionary with the results; writes nothing (see
+    write_line_result), so it can run in parallel workers."""
     tana, line, nelem, res, wv_l, wv_r, delta, ct_elem = task
     S = STAR
     wv, fl = S['wv'], S['fl']
@@ -81,6 +108,7 @@ def analyse_line(task):
 
         mask = (wv >= line - 50) & (wv <= line + 50)
         wave, flux = wv, fl
+        _norm2_window_warning(line, w1, w2)
 
     elif cfg.type_norm == 1:
         w1, w2 = 0, 0
@@ -131,24 +159,13 @@ def analyse_line(task):
 
     # SYNTHETIC
     if cfg.grid == 'y':
-        names_syn = np.atleast_1d(S['names_syn_all'])
-
-        elem_tmp = strip_ion(elem)
-        # FIX: exact match of the fields of the names (see grid_name_matches)
-        mask = np.array([grid_name_matches(name, S['teff1'], S['logg1'], S['vt1'], elem_tmp) for name in names_syn], dtype=bool)
-
-        names_syn_tmp = names_syn[mask]
-        mets = {grid_name_fields(name)['met'] for name in names_syn_tmp}
-        if len(mets) > 1:
-            print(f"WARNING ({cfg.path_syn}): synthetics of line {line} with different [M/H] in the names ({', '.join(sorted(mets))}): all are used")
-        names_syn_tmp1, abu_syn = process_names_grid(names_syn_tmp)
-        in_grid = np.array([is_line_in_grid(filename, line) for filename in names_syn_tmp1], dtype=bool)
-        names_syn = [filename for filename, ok in zip(names_syn_tmp1, in_grid) if ok]
-        abu_syn = np.asarray(abu_syn)[in_grid] if in_grid.size else np.asarray(abu_syn)
-        if not names_syn:
+        # FIX: exact match of Teff, logg, vt, [M/H], alpha and element; one wavelength range
+        names_syn, abu_syn, why = select_grid_synthetics(S['names_syn_all'], model_name_codes(teff, logg, vt, met, alpha),
+                                                         strip_ion(elem), line)
+        if why:
             print('---')
-            print(f"No synthetic spectra for line {line}")
-            rec.update(skipped=True, reason='no synthetic spectra in the grid')
+            print(f"No synthetic spectra for line {line}: {why}")
+            rec.update(skipped=True, reason=f'grid: {why}')
             return rec
 
     elif cfg.grid == 'n':
@@ -191,7 +208,7 @@ def analyse_line(task):
         if Abu != 99.99 and not (cfg.ep_min <= EP <= cfg.ep_max) and EP != 99.999 and not tana.startswith(('ROTAT', 'MOLEC', 'ABU2', 'ISOR')):
             rec['flag'] = -2
 
-        if Abu == 99.99 and not tana.startswith(('ISOR')):
+        if Abu == 99.99:    # FIX: also ISOR (before, a rejected ISOR line kept flag 0)
             rec['flag'] = -3
 
     elif ans in ['y', 'r'] and tana == 'ROTAT':
@@ -202,56 +219,69 @@ def analyse_line(task):
     elif ans == 'e':
         return rec
 
-    ### errors due to the parameters: each parameter is varied by its error (vt only for EW > 50 mA, logg only for ionized species)
-    if T_err is not None and ans != 'r':
+    ### errors due to the parameters: each parameter is varied by its error (vt only for EW > 50 mA,
+    ### logg only for ionized species, MOLEC and ABU2)
+    if T_err is not None and ans == 'r':
+        # FIX: a line rejected in the interactive mode has the 3 error columns too (99.99), so all the
+        # rows of the .fit file have the same columns (before, salvador-merge could not read them)
+        rec['errors'] = (99.99, 99.99, 99.99)
+
+    elif T_err is not None:
         if tana != 'ISOR':
             delta = Abu - abu0
         elif tana == 'ISOR':
             delta = Abu
 
+        def perturbed_fit(label: str, teff_p: float, logg_p: float, vt_p: float, message: str) -> float:
+            """Result of the line with one parameter changed; 99.99 if it cannot be measured.
+            NEW: in grid mode the synthetics with the changed parameter are taken from the grid
+            (before, the nominal ones were used again, so the errors were always 0.00)."""
+            param_p = {'teff': teff_p, 'logg': logg_p, 'met': met, 'alpha': alpha, 'vt': vt_p, 'res': res,
+                       'line': line, 'nelem': nelem, 'abu_var': abu_var, 'delta': delta, 'tana': tana}
+            names_p, abu_p = names_syn, abu_syn
+            if cfg.grid == 'y':
+                names_p, abu_p, why = select_grid_synthetics(S['names_syn_all'], model_name_codes(teff_p, logg_p, vt_p, met, alpha),
+                                                             strip_ion(elem), line)
+                if why:
+                    print(f'---\nGrid ({label}): {why}: error set to 99.99\n')
+                    return 99.99
+            print(message)
+            try:
+                return measure_line(wave, flux, names_p, wind_l, wind_r, elem, param_p, name_star, abu_p, w1, w2, ct_elem,
+                                    fixed_params, **arg_extra, save_plot=False)['abu_fin']
+            except Exception as e:     # noqa: BLE001 -- only this error is lost, not the line
+                print(f'---\nThe fit with {label} stopped with an error ({type(e).__name__}: {e}): error set to 99.99\n')
+                return 99.99
+
         ### +T_eff
-        T_tmp = int(teff + T_err)
-        param_kur3 = {'teff': T_tmp, 'logg': logg, 'met': met, 'alpha': alpha, 'vt': vt, 'res': res,
-        'line': line, 'nelem': nelem, 'abu_var': abu_var, 'delta': delta, 'tana': tana}
         Abu_pT = Abu
         if Abu != 99.99 and T_err != 0 and rec['flag'] == 0:
-            print(f"Variation of Teff: \u0394T = {T_err:.0f} [K] \n")
-            results=measure_line(wave, flux, names_syn, wind_l, wind_r, elem, param_kur3, name_star, abu_syn, w1, w2, ct_elem, fixed_params, **arg_extra, save_plot=False)
-            Abu_pT = results['abu_fin']
+            Abu_pT = perturbed_fit(f'Teff + {T_err:.0f} K', int(teff + T_err), logg, vt,
+                                   f"Variation of Teff: \u0394T = {T_err:.0f} [K] \n")
 
-        ### +logg
+        ### +logg: ionized species, and (NEW) always for MOLEC and ABU2 (pressure-sensitive)
         Abu_pg = Abu
-        logg_tmp = float(logg + g_err)
-        param_kur3 = {'teff': teff, 'logg': logg_tmp, 'met': met, 'alpha': alpha, 'vt': vt, 'res': res,
-                'line': line, 'nelem': nelem, 'abu_var': abu_var, 'delta': delta, 'tana': tana}
-        if "{:.2f}".format(nelem).endswith("01") and Abu!=99.99 and g_err != 0 and rec['flag'] == 0 and tana != 'ISOR':
-            print('---')
-            print('Variation of logg: \u0394logg = %.2f [dex]' % (g_err), '\n')
-            results=measure_line(wave, flux, names_syn, wind_l, wind_r, elem, param_kur3, name_star, abu_syn, w1, w2, ct_elem, fixed_params, **arg_extra, save_plot=False)
-            Abu_pg = results['abu_fin']
+        logg_msg = '---\nVariation of logg: \u0394logg = %.2f [dex] \n' % (g_err)
+        if ("{:.2f}".format(nelem).endswith("01") or tana in ('MOLEC', 'ABU2')) and Abu!=99.99 and g_err != 0 and rec['flag'] == 0 and tana != 'ISOR':
+            Abu_pg = perturbed_fit(f'logg + {g_err:.2f}', teff, float(logg + g_err), vt, logg_msg)
 
         elif Abu!=99.99 and g_err != 0 and tana == 'ISOR':
-            print('---')
-            print('Variation of logg: \u0394logg = %.2f [dex]' % (g_err), '\n')
-            results=measure_line(wave, flux, names_syn, wind_l, wind_r, elem, param_kur3, name_star, abu_syn, w1, w2, ct_elem, fixed_params, **arg_extra, save_plot=False)
-            Abu_pg = results['abu_fin']
+            Abu_pg = perturbed_fit(f'logg + {g_err:.2f}', teff, float(logg + g_err), vt, logg_msg)
 
         ### +vt
         Abu_pv = Abu
         if ew > 50 and Abu!=99.99 and v_err != 0 and rec['flag'] == 0:
-            print('---')
-            print('Variation of v_t: \u0394vt = %.2f [km/s]' % (v_err), '\n')
-            vt_tmp = float(vt + v_err)
-            param_kur3 = {'teff': teff, 'logg': logg, 'met': met, 'alpha': alpha, 'vt': vt_tmp, 'res': res,
-            'line': line, 'nelem': nelem, 'abu_var': abu_var, 'delta': delta, 'tana': tana}
-            results=measure_line(wave, flux, names_syn, wind_l, wind_r, elem, param_kur3, name_star, abu_syn, w1, w2, ct_elem, fixed_params, **arg_extra, save_plot=False)
-            Abu_pv = results['abu_fin']
+            Abu_pv = perturbed_fit(f'vt + {v_err:.2f}', teff, logg, float(vt + v_err),
+                                   '---\nVariation of v_t: \u0394vt = %.2f [km/s] \n' % (v_err))
 
-        ###
-        delta_pT = np.abs(Abu - Abu_pT) if Abu_pT != 99.99 else 99.99
-        delta_pg = np.abs(Abu - Abu_pg) if Abu_pg != 99.99 else 99.99
-        delta_pv = np.abs(Abu - Abu_pv) if Abu_pv != 99.99 else 99.99
-        rec['errors'] = (delta_pT, delta_pg, delta_pv)
+        ### FIX: signed differences (result with the parameter increased - nominal result), so that the
+        ### errors of [X/Fe] can take into account species that change in the opposite way to Fe I
+        ### (before: absolute values). 99.99 if the changed fit could not be measured.
+        def signed_delta(abu_p: float) -> float:
+            """abu_p - Abu rounded to 0.01 (+ 0.0: no '-0.00' in the files), or 99.99."""
+            return round(float(abu_p - Abu), 2) + 0.0 if abu_p != 99.99 else 99.99
+
+        rec['errors'] = (signed_delta(Abu_pT), signed_delta(Abu_pg), signed_delta(Abu_pv))
 
     return rec
 
@@ -272,7 +302,7 @@ def write_line_result(rec, abu_file, abu_file_isor, flags, kept):
                 f.write(f"{name_star:<30}  {line:>8.3f}  {nelem:>5.2f}  {Abu:>5.2f}  {ew:>6.2f}  {EP:>6.3f}  {loggf:>6.3f}  {emc:>5.2f}\n")
         elif tana == 'ISOR':
             with open(abu_file_isor, 'a') as f:
-                f.write(f"{name_star:<30}  {line:>8.3f}  {nelem:>5.2f}  {Abu:>5.0f}  {emc:>3.0f}\n")
+                f.write(f"{name_star:<30}  {line:>8.3f}  {nelem:>5.2f}  {_isor_txt(Abu, 5)}  {_isor_txt(emc, 3)}\n")
 
     elif ans in ['y', 'r'] and tana == 'ROTAT':
         # NEW: rotation results in their own file star_rot.fit (before, in star.fit, where the summary
@@ -292,11 +322,7 @@ def write_line_result(rec, abu_file, abu_file_isor, flags, kept):
             f.write(f"{name_star:<30}  {line:>8.3f}  {nelem:>5.2f}  {rot_txt:>5}  {err_txt:>5}  {abu_txt:>5}  {err_abu_txt:>5}\n")
 
     elif ans == 'e':
-        cleaning_tmp_files(patterns_to_delete, directory=curr_path, newer_than=start_time)
-        cleanup_linelist_cut()
-        if os.path.isdir(path_tmp):
-            shutil.rmtree(path_tmp)
-        sys.exit()
+        stop_run()
 
     if rec['errors'] is not None:
         delta_pT, delta_pg, delta_pv = rec['errors']
@@ -305,7 +331,50 @@ def write_line_result(rec, abu_file, abu_file_isor, flags, kept):
         if tana != 'ISOR':
             add_errors_to_file(abu_file, new_headers, 8, f"{delta_pT:>5.2f}", f"{delta_pg:>5.2f}", f"{delta_pv:>5.2f}")
         else:
-            add_errors_to_file(abu_file_isor, new_headers, 5, f"{delta_pT:>6.0f}", f"{delta_pg:>5.0f}", f"{delta_pv:>4.0f}")
+            add_errors_to_file(abu_file_isor, new_headers, 5, _isor_txt(delta_pT, 6), _isor_txt(delta_pg, 5), _isor_txt(delta_pv, 4))
+
+
+def stop_run(message: str | None = None) -> None:
+    """Stop the run (exit command 'e', or too many errors): temporary files are removed."""
+    cleaning_tmp_files(patterns_to_delete, directory=curr_path, newer_than=start_time)
+    cleanup_linelist_cut()
+    if os.path.isdir(path_tmp):
+        shutil.rmtree(path_tmp)
+    sys.exit(message)
+
+
+class FailureCounter:
+    """Lines in a row stopped by an error: the run stops at MAX_FAILURES (most likely a problem
+    of the installation or of the input files, e.g. K2 or linelist.xkur, that affects every line)."""
+
+    def __init__(self) -> None:
+        self.in_a_row = 0
+
+    def update(self, rec: dict) -> None:
+        """Count a failed line, reset at a line analysed; skipped lines change nothing."""
+        if rec.get('failed'):
+            self.in_a_row += 1
+            if self.in_a_row >= MAX_FAILURES:
+                stop_run(f'Error: {MAX_FAILURES} lines in a row stopped with an error: the run is stopped. '
+                         'See the messages above (in parallel mode: the logs in salvador_work/); common causes: '
+                         'K2 or the Kurucz codes, a wrong path in linelist.xkur, the input files.')
+        elif not rec['skipped']:
+            self.in_a_row = 0
+
+
+def _plot_wavelength(filename: str) -> float:
+    """Wavelength in the name of the plot of a line (line_<wavelength>.pdf), to sort the pages."""
+    match = re.fullmatch(r'line_(.+)\.pdf', str(filename))
+    try:
+        return float(match[1]) if match else np.inf
+    except ValueError:
+        return np.inf
+
+
+def _isor_txt(value: float, width: int) -> str:
+    """A value of the _isor.fit file: integer, or 99.99 (not measured). FIX: 99.99 was written with
+    0 decimals, i.e. as 100, and a rejected line entered the mean isotopic ratio as 100."""
+    return f"{'99.99':>{width}}" if value == 99.99 else f"{value:>{width}.0f}"
 
 
 def prepare_parallel_star(tasks):
@@ -342,6 +411,8 @@ def run() -> None:
     if cfg.grid == 'n' and shutil.which('k2.py') is None:
         sys.exit('Error: k2.py not found in PATH. salvador computes the synthetic spectra with K2: '
                  'install it and make sure k2.py is executable and in your PATH.')
+    if cfg.grid == 'n':
+        check_synth_out_linelists()
 
     ### main block of analysis
     print("#########################################################")
@@ -427,8 +498,7 @@ def run() -> None:
 
         plot_file = 'nomi_plot.txt'
         path_plot_file = path_tmp / plot_file
-        with open(path_plot_file, "w") as file:
-            pass
+        path_plot_file.write_text('')
 
         ### reads the spectrum
         wv, fl = read_spec(ids)
@@ -451,9 +521,6 @@ def run() -> None:
         print('END   = %.2f [A]' % (wv[-1]))
         print('------------------------------------------')
 
-        teff1 = str(teff.astype(int))
-        logg1 = f"{logg:.2f}".replace('.', '')
-        vt1 = f"{vt:.2f}".replace('.', '')
         ### READING LINELIST
         try:
             LINES, NELEM, WV_L, WV_R, DELTA = np.genfromtxt(linelist_file, comments='#', usecols=(1,2,4,5,6), dtype='float', unpack=True)
@@ -469,7 +536,9 @@ def run() -> None:
             T_ABU = np.atleast_1d(T_ABU)
 
             _, unique_indices = np.unique(LINES, return_index=True)
-            sorted_indices = np.sort(unique_indices)
+            # NEW: lines in order of wavelength (np.unique sorts), so the rows of the .fit files and
+            # the pages of the PDF are in order of wavelength (before: in the order of the linelist)
+            sorted_indices = unique_indices
             # CHECK: rows with the same wavelength as an earlier row are ignored (before: silently)
             for k in np.setdiff1d(np.arange(LINES.size), sorted_indices):
                 print(f"WARNING ({linelist_file}): {T_ABU[k]} line {LINES[k]:.3f} has the same wavelength as an earlier row: ignored")
@@ -500,7 +569,9 @@ def run() -> None:
         COUNTS_ELEM = np.array([counts[c] for c in NELEM])
 
         ### CREATION OF FILE ABUNDANCES
-        name_star = ids.split('.')[0]
+        # FIX: name of the spectrum without folder and extension (before: the text before the
+        # first dot, so './star.fits' or '../data/star.fits' gave '' and files named '.fit', '.pdf')
+        name_star = Path(ids).stem
 
         abu_file = name_star+'.fit'
         with open(abu_file,'w') as f:
@@ -520,6 +591,7 @@ def run() -> None:
         with open(abu_file_isor,'w') as f:
             f.write('#   FLAG =  1  (USED LINE)\n')
             f.write('#   FLAG =  0  (REJ. SIGMA-CLIPPING)\n')
+            f.write('#   FLAG = -3  (REJ. ISOR)\n')
             f.write('#' + '-'*39 + '\n')
             f.write('#SPECTRUM                           LINE   ELEM   ISOR  eMC\n')
 
@@ -560,7 +632,7 @@ def run() -> None:
         ### star-level data used by analyse_line (inherited by the parallel workers)
         STAR.update(wv=wv, fl=fl, teff=teff, logg=logg, met=met, alpha=alpha, vt=vt,
                     abu_var=os.path.abspath(abu_var), name_star=name_star, T_err=T_err, g_err=g_err, v_err=v_err,
-                    edges_abu2=edges_abu2, rows_rotat=rows_rotat, teff1=teff1, logg1=logg1, vt1=vt1)
+                    edges_abu2=edges_abu2, rows_rotat=rows_rotat)
         if cfg.type_norm == 2:
             STAR.update(w1_star=w1_star, w2_star=w2_star)
         if cfg.grid == 'y':
@@ -571,10 +643,12 @@ def run() -> None:
 
         ### analysis of each line present in the linelist file
         flags, kept = [], []
+        failures = FailureCounter()
         if n_workers == 1:
             for task in tasks:
                 rec = analyse_line(task)
                 write_line_result(rec, abu_file, abu_file_isor, flags, kept)
+                failures.update(rec)
         else:
             prepare_parallel_star(tasks)
             print(f'Analysing {len(tasks)} lines with {n_workers} parallel processes (logs in {WORK_DIR.name}/)')
@@ -582,6 +656,7 @@ def run() -> None:
             try:
                 for k, rec in enumerate(pool.imap(analyse_line, tasks), 1):
                     write_line_result(rec, abu_file, abu_file_isor, flags, kept)
+                    failures.update(rec)
                     if rec['skipped']:
                         print(f'[{k:>3}/{len(tasks)}] {rec["line"]:9.3f} A  skipped: {rec["reason"]}')
                     elif rec['tana'] == 'ROTAT':
@@ -610,7 +685,8 @@ def run() -> None:
                 print("Warning: Plot list file not found. No PDF will be created.")
 
             pdf_filenames = np.unique(np.genfromtxt(plot_list_file, dtype=str, defaultfmt=" "))
-            pdf_filenames = np.atleast_1d(pdf_filenames)
+            # NEW: pages in order of wavelength (before: in alphabetical order of the file names)
+            pdf_filenames = np.array(sorted(np.atleast_1d(pdf_filenames), key=_plot_wavelength), dtype=str)
 
             destination_path = curr_path / f"{name_star}.pdf"
 
@@ -647,70 +723,10 @@ def run() -> None:
         # CREATION OF ABUNDANCE_FINAL.TXT FROM ABU_FILE
         if check_if_has_data(abu_file, '#SPECTRUM'):
             ID, nelem, abu, abu_mc, other_nelems, df = read_fit_file(count_header_cols(abu_file), col_names_base, col_names_err, abu_file)  # FIX: column count from the file header
-
-            # This list will hold all the lines we want to write to the file.
-            lines_to_write = []
-
-            # Handle the two cases (with/without errors) by calling the correct functions.
-            # --- Case with parameter errors ---
-            if 'abu_pT' in df.columns:
-                abu_pT = df['abu_pT'].values
-                abu_pg = df['abu_pg'].values
-                abu_pv = df['abu_pv'].values
-
-                if 26.00 in nelem:
-                    nlin, feh, sigma, s1, s2, s3, s4, flag_line, s_param, params_XH = extract_abu_fe(nelem, abu, abu_mc, 26.00, flag_line, abu_pT, abu_pg, abu_pv)
-                    abu_abs_fe = params_XH['abu_abs']
-                    s_tot_feh = params_XH['s_tot']
-                    s_int_feh = params_XH['s_int']
-                    s_params_feh = params_XH['s_params']
-                else:
-                    abu_abs_fe = abu_absolute('Fe', met, met)
-                    nlin, feh, sigma, s1, s2, s3, s4, s_param, s_tot_feh, s_int_feh, s_params_feh = 0, met, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 99.99, 99.99, 99.99
-
-                lines_to_write.append(f"{ID:<30}  {26.00:5.2f}  {nlin:>5}  {feh:>5.2f}  {sigma:>5.2f}  {s1:>5.2f}  {s_param:>5.2f}       {abu_abs_fe:>5.2f}  {s_tot_feh:>5.2f}   {s_int_feh:>5.2f}   {s_params_feh:>5.2f}")
-
-                for nel in other_nelems:
-                    if nel == 26.01:
-                        nlin, mean, sigma, s_int, *_, flag_line, s_param, params_XH = extract_abu_fe(nelem, abu, abu_mc, nel, flag_line, abu_pT, abu_pg, abu_pv)
-                    else:
-                        nlin, mean, sigma, flag_line, s_param, s_int, params_XH = extract_abu(nelem, abu, abu_mc, nel, feh, flag_line, s1, param_errors=(abu_pT,abu_pg,abu_pv), fe_errors=(s2,s3,s4))
-
-                    abu_abs_xh = params_XH['abu_abs']
-                    s_tot_xh = params_XH['s_tot']
-                    s_int_xh = params_XH['s_int']
-                    s_params_xh = params_XH['s_params']
-
-                    lines_to_write.append(f"{ID:<30}  {nel:>5.2f}  {nlin:>5}  {mean:>5.2f}  {sigma:>5.2f}  {s_int:>5.2f}  {s_param:>5.2f}       {abu_abs_xh:>5.2f}  {s_tot_xh:>5.2f}   {s_int_xh:>5.2f}   {s_params_xh:>5.2f}")
-
-            # --- Case without parameter errors ---
-            else:
-                if 26.00 in nelem:
-                    nlin, feh, sigma, flag_line, s_param, params_XH = extract_abu_fe(nelem, abu, abu_mc, 26.00, flag_line)
-                    abu_abs_fe = params_XH['abu_abs']
-                    s_tot_feh = params_XH['s_tot']
-                    s_int_feh = params_XH['s_int']
-                    s_params_feh = params_XH['s_params']
-                else:
-                    abu_abs_fe = abu_absolute('Fe', met, met)
-                    nlin, feh, sigma, s_param, s_tot_feh, s_int_feh, s_params_feh = 0, met, 99.99, 99.99, 99.99, 99.99, 99.99
-
-                s1 = sigma
-                lines_to_write.append(f"{ID:<30}  {26.00:5.2f}  {nlin:>5}  {feh:5.2f}  {sigma:5.2f}  {sigma:>5.2f}  {s_param:>5.2f}       {abu_abs_fe:>5.2f}  {s_tot_feh:>5.2f}   {s_int_feh:>5.2f}   {s_params_feh:>5.2f}")
-
-                for nel in other_nelems:
-                    if nel == 26.01:
-                        nlin, mean, sigma, flag_line, s_param, params_XH = extract_abu_fe(nelem, abu, abu_mc, nel, flag_line)
-                        s_int = sigma
-                    else:
-                        nlin, mean, sigma, flag_line, s_param, s_int, params_XH = extract_abu(nelem, abu, abu_mc, nel, feh, flag_line, s1)
-
-                    abu_abs_xh = params_XH['abu_abs']
-                    s_tot_xh = params_XH['s_tot']
-                    s_int_xh = params_XH['s_int']
-                    s_params_xh = params_XH['s_params']
-
-                    lines_to_write.append(f"{ID:<30}  {nel:>5.2f}  {nlin:>5}  {mean:>5.2f}  {sigma:>5.2f}  {s_int:>5.2f}  {s_param:>5.2f}       {abu_abs_xh:>5.2f}  {s_tot_xh:>5.2f}   {s_int_xh:>5.2f}   {s_params_xh:>5.2f}")
+            param_errors = (df['abu_pT'].values, df['abu_pg'].values, df['abu_pv'].values) if 'abu_pT' in df.columns else None
+            # rows of [Fe/H] and [X/Fe] (same function as salvador-merge); without Fe I lines the
+            # [M/H] of the model is used as [Fe/H]
+            lines_to_write, flag_line = star_abundance_rows(ID, nelem, abu, abu_mc, flag_line, param_errors, feh_model=met)
 
             # Write all the generated lines to the final file in ONE operation.
             with open('abundance_final.txt', 'a+') as f:
@@ -724,135 +740,10 @@ def run() -> None:
 
 
             #----------------------------------------------------------- Plot Gala-like
-            column_names = get_header_names(abu_file)
-            if column_names:
-                try:
-                    data = pd.read_csv(abu_file, sep=r"\s+", comment='#', header=None, names=column_names)
-                except FileNotFoundError:
-                    print(f"Error: File not found '{abu_file}'")
-                    data = pd.DataFrame()
-
-            else:
-                print("No column names.")
-                data = pd.DataFrame()
-
-            # --- 1. Data Selection ---
-            fe_data = data[(data['ELEM'] == 26.00) & (data['ABU'] != 99.99)].copy()
-            feii_data = data[(data['ELEM'] == 26.01) & (data['ABU'] != 99.99)].copy()
-
-            # MAIN CHECK: without Fe I nothing can be done.
-            if not fe_data.empty and cfg.grid == 'n':
-                # --- Prepare Data for Plotting ---
-
-                # 1. Fe I (it exists)
-                fe_data['reduced_ew'] = np.log10((fe_data['EW'].clip(lower=1e-9)/1000) / fe_data['LINE'])
-                used_data = fe_data[fe_data['flag_line'] == 1]
-                discarded_data = fe_data[fe_data['flag_line'] != 1]
-
-                # 2. Fe II (ONLY IF IT EXISTS)
-                has_feii = not feii_data.empty  # Convenience flag
-
-                if has_feii:
-                    feii_data['reduced_ew'] = np.log10((feii_data['EW'].clip(lower=1e-9)/1000) / feii_data['LINE'])
-                    used_feii = feii_data[feii_data['flag_line'] == 1]
-                    discarded_feii = feii_data[feii_data['flag_line'] == 0]
-
-                # --- Common limits (Fe I + Fe II) ---
-
-                # 1. Fe I and Fe II together, only to compute the min/max
-                if not feii_data.empty:
-                    all_data_limits = pd.concat([fe_data, feii_data])
-                else:
-                    all_data_limits = fe_data
-
-                # 2. Limits from the joined data (all_data_limits)
-                # Filter on ABU and LINE (excluding 99.99)
-                valid_rows_abu = all_data_limits[all_data_limits['ABU'] != 99.99]
-                valid_abu = valid_rows_abu['ABU']
-                valid_wv = valid_rows_abu['LINE']
-
-                miny = valid_abu.min()
-                maxy = valid_abu.max()
-                minx1 = valid_wv.min()
-                maxx1 = valid_wv.max()
-
-                # Filter on EP (excluding 99.999)
-                valid_ep = all_data_limits[all_data_limits['EP'] != 99.999]['EP']
-                minx2 = valid_ep.min()
-                maxx2 = valid_ep.max()
-
-                # --- Create the 3-Panel Plot ---
-                fig, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize=(12, 6.75), sharey=True)
-
-                # --- Panel 1: Wave ---
-                # Fit on Fe I only
-                if len(used_data['LINE']) >= 3:
-                    y_fit1, m1, c1, em1, ec1 = get_coeffs(used_data['LINE'], used_data['ABU'])
-                    ax1.plot(used_data['LINE'].to_numpy(), y_fit1.to_numpy(), c='red', label=rf'$y = ({m1:.3f} \pm {em1:.3f})x + ({c1:.2f} \pm {ec1:.2f})$')
-
-                # Plot Fe I
-                ax1.scatter(discarded_data['LINE'].to_numpy(), discarded_data['ABU'].to_numpy(), color='gray', alpha=0.5, label='Discarded', lw=0.35)
-                ax1.scatter(used_data['LINE'].to_numpy(), used_data['ABU'].to_numpy(), color='blue', ec='k', label='Used', lw=0.35)
-
-                # Fe II (ONLY IF IT EXISTS)
-                if has_feii:
-                    ax1.scatter(discarded_feii['LINE'].to_numpy(), discarded_feii['ABU'].to_numpy(), color='lightcoral', marker='^', alpha=0.5, lw=0.35)
-                    ax1.scatter(used_feii['LINE'].to_numpy(), used_feii['ABU'].to_numpy(), color='red', ec='k', marker='^', label='Fe II', lw=0.35)
-
-                # Limiti e stile
-                if np.isfinite(miny) and np.isfinite(maxy):
-                    ax1.set_ylim(miny - 0.2, maxy + 0.2)
-                    ax1.set_xlim(minx1 - 50, maxx1 + 50)
-                else:
-                    ax1.set_ylim(0, 1)
-                apply_plot_style(ax1, r'Wavelength [$\AA$]', 'A(Fe)')
-                ax1.legend(fontsize=7)
-
-                # --- Panel 2: EP ---
-                # Fit FeI
-                if len(used_data['LINE']) >= 3:
-                    y_fit2, m2, c2, em2, ec2 = get_coeffs(used_data['EP'], used_data['ABU'])
-                    ax2.plot(used_data['EP'].to_numpy(), y_fit2.to_numpy(), c='red', label=rf'$y = ({m2:.2f} \pm {em2:.2f})x + ({c2:.2f} \pm {ec2:.2f})$')
-
-                # Plot Fe I
-                ax2.scatter(discarded_data['EP'].to_numpy(), discarded_data['ABU'].to_numpy(), color='gray', alpha=0.5, lw=0.35)
-                ax2.scatter(used_data['EP'].to_numpy(), used_data['ABU'].to_numpy(), color='blue', ec='k', lw=0.35)
-
-                # Fe II (ONLY IF IT EXISTS)
-                if has_feii:
-                    ax2.scatter(discarded_feii['EP'].to_numpy(), discarded_feii['ABU'].to_numpy(), color='lightcoral', marker='^', alpha=0.5, lw=0.35)
-                    ax2.scatter(used_feii['EP'].to_numpy(), used_feii['ABU'].to_numpy(), color='red', ec='k', marker='^', lw=0.35)
-
-                if np.isfinite(minx2) and np.isfinite(maxx2):     # FIX: no EP available (all 99.999)
-                    ax2.set_xlim(minx2 - 0.2, maxx2 + 0.2)
-                apply_plot_style(ax2, 'Excitation Potential [eV]', '')
-                if ax2.get_legend_handles_labels()[0]:  # legend only if there is a fit (>= 3 lines)
-                    ax2.legend(fontsize=7)
-
-                # --- Panel 3: Reduced EW ---
-                # Fit FeI
-                if len(used_data['LINE']) >= 3:
-                    y_fit3, m3, c3, em3, ec3 = get_coeffs(used_data['reduced_ew'], used_data['ABU'])
-                    ax3.plot(used_data['reduced_ew'].to_numpy(), y_fit3.to_numpy(), c='red', label=rf'$y = ({m3:.2f} \pm {em3:.2f})x + ({c3:.2f} \pm {ec3:.2f})$')
-
-                # Plot Fe I
-                ax3.scatter(discarded_data['reduced_ew'].to_numpy(), discarded_data['ABU'].to_numpy(), color='gray', alpha=0.5, lw=0.35)
-                ax3.scatter(used_data['reduced_ew'].to_numpy(), used_data['ABU'].to_numpy(), color='blue', ec='k', lw=0.35)
-
-                # Fe II (ONLY IF IT EXISTS)
-                if has_feii:
-                    ax3.scatter(discarded_feii['reduced_ew'].to_numpy(), discarded_feii['ABU'].to_numpy(), color='lightcoral', marker='^', alpha=0.5, lw=0.35)
-                    ax3.scatter(used_feii['reduced_ew'].to_numpy(), used_feii['ABU'].to_numpy(), color='red', ec='k', marker='^', lw=0.35)
-
-                ax3.set_xlim(cfg.ewr_min - 0.1, cfg.ewr_max + 0.1)
-                apply_plot_style(ax3, r'log(EW / $\lambda$)', '')
-                if ax3.get_legend_handles_labels()[0]:  # legend only if there is a fit (>= 3 lines)
-                    ax3.legend(fontsize=7)
-
-                # --- Finalization ---
-                plt.subplots_adjust(left=0.07, right=0.98, bottom=0.25, top=0.75, wspace=0.1)
-                plt.savefig(name_star+'_tmp.pdf')
-                plt.close(fig)  # FIX: one figure was left open for every star
+            # Fe I abundances against wavelength, excitation potential and reduced EW (same function
+            # as salvador-merge); not with a grid of synthetics (no EP)
+            if cfg.grid == 'n':
+                fe_diagnostic_plot(abu_file, name_star + '_tmp.pdf', ewr_range=(cfg.ewr_min, cfg.ewr_max))
 
             # --- 1. File names ---
             # The file just saved
@@ -888,6 +779,8 @@ def run() -> None:
                     print(f"Error during merging process: {e}")
                     if output_pdf_path.exists():
                         output_pdf_path.unlink()
+            elif tmp_pdf_path.exists():     # no plot of the lines: the Fe plot is the PDF of the star
+                tmp_pdf_path.rename(main_pdf_path)
 
 
         else:

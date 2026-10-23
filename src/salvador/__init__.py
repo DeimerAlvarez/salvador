@@ -5,4 +5,4 @@ The command line tools are salvador, salvador-merge, salvador-regression and sal
 The functions are in the modules of this package, one per topic (see salvador.utilities).
 """
 
-__version__ = '1.0.1'
+__version__ = '1.1.0'

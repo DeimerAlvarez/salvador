@@ -12,13 +12,14 @@ abu_dict                   salvador/elements.py           Dictionary {element sy
 abu_mc_line                salvador/fitting.py            Monte Carlo error of the abundance of a line: the best-fit profile plus noise of the measured
 add_delta_entry            salvador/k2_interface.py       Add to the abundance-variation file passed to K2 the entry of the line: DELTA (abundance),
 add_errors_to_file         salvador/fit_files.py          Add the three errors due to the parameters (d_Teff, d_logg, d_vt) to the LAST row of a .fit
-analyse_line               salvador/cli.py                Analysis of one line of the linelist: nominal fit (measure_line) and, if the star has the
+analyse_line               salvador/cli.py                Analysis of one line (see _analyse_line). NEW: an unexpected error stops only this line,
 analysis_rotat             salvador/rotation.py           Rotational velocity (and abundance) of a line: coarse grid of synthetic spectra (abundance x
 append_flag_column         salvador/fit_files.py          Add the FLAG column (one value per data row, in order) to a .fit file and its name to the
 apply_plot_style           salvador/plotting.py           Apply the requested aesthetic settings to a given axis (ax).
 autok                      salvador/k2_interface.py       Synthetic spectrum computed by K2 (SYNTHE) for the line of param1, with the abundance of the
 check_if_has_data          salvador/fit_files.py          True if the file has at least one data row after the header line starting with keyword.
 check_installation         salvador/cli.py                Print the versions of Python and of the packages salvador needs, where K2 and the table of
+check_synth_out_linelists  salvador/k2_interface.py       NEW: warn if linelist.xkur, or a linelist it lists, changed since the synthetic spectra of
 cleaning_tmp_files         salvador/spectra_io.py         Delete the files of the directory matching the patterns (temporary files of a run).
 cleanup_linelist_cut       salvador/k2_interface.py       Remove the trimmed linelists (end of run).
 cleanup_parallel_work      salvador/parallel.py           Remove the workers' scratch directories; the logs (one per worker, with the detailed
@@ -34,6 +35,8 @@ eqw_k2                     salvador/k2_interface.py       Equivalent width of th
 extract_abu                salvador/summary.py            [X/Fe] of the species nel and its errors, combined with those of Fe (s_stat_Fe, fe_errors);
 extract_abu_fe             salvador/summary.py            [Fe/H] from the Fe I (or Fe II) lines: mean, errors and the absolute abundance (params_XH).
 extract_abu_isor           salvador/summary.py            Isotopic ratio of the species nel: mean and errors, rounded to integers.
+FailureCounter             salvador/cli.py                Lines in a row stopped by an error: the run stops at MAX_FAILURES (most likely a problem
+fe_diagnostic_plot         salvador/plotting.py           Fe I (and Fe II) abundances of a .fit file against wavelength, excitation potential and
 find_clipped_regions       salvador/normalization.py      Continuum regions cleaned of absorption features: in each region the pixels outside 5 sigma
 format_axes                salvador/plotting.py           Style of an axis: ticks inside on all sides, minor ticks, thick frame.
 fwhm_empirica              salvador/fitting.py            Empirical FWHM and center of an absorption line, from the two points where a spline of the
@@ -42,21 +45,22 @@ gaussian_cf                salvador/fitting.py            Gaussian profile on a 
 get_coeffs                 salvador/summary.py            Linear fit y = m x + c. Returns (fitted values, m, c, error of m, error of c).
 get_element_symbol         salvador/elements.py           Symbol of a species from its code: 26.00 -> 'Fe', 26.01 -> 'FeII', 26.02 -> 'FeIII'.
 get_header_names           salvador/fit_files.py          Names of the columns of a file, from its LAST comment (#) row. None if the file is missing.
-get_type_input             salvador/line_analysis.py      Ask for a value until it can be converted to target_type (e.g. float).
-grid_name_fields           salvador/spectra_io.py         Fields of the name of a grid synthetic (met, teff, logg, vt, element).
-grid_name_matches          salvador/spectra_io.py         True if a grid synthetic has exactly these Teff, logg, vt and element.
+get_type_input             salvador/line_analysis.py      Ask for a value until it can be converted to target_type (e.g. float) and, if valid (a
+grid_name_fields           salvador/spectra_io.py         Fields of the name of a grid synthetic.
+grid_name_matches          salvador/spectra_io.py         True if a grid synthetic has exactly these Teff, logg, vt and element (and [M/H] and
 init_parallel_worker       salvador/parallel.py           Runs once in each worker: own scratch directory and own log file.
 interp_in_abundance        salvador/fitting.py            Linear interpolation in abundance of a set of spectra, for all pixels at once.
 is_line_in_grid            salvador/spectra_io.py         True if the wavelength range in the name of a grid synthetic (..._w1_w2.nb) contains the line.
 isolate_pure_line          salvador/fitting.py            Part of a synthetic profile that belongs to the main line only: from the minimum, outwards
 k2_linelist                salvador/k2_interface.py       Linelist file to pass to K2 for the window [w1, w2] (A). The last 3 windows are kept.
 LazyConfig                 salvador/config.py             The settings of the run (a Config), read from input.salvador at the first use.
+linelist_fingerprint       salvador/k2_interface.py       linelist.xkur (its text) and the size and modification time of each file it lists; None if
 load_config                salvador/config.py             Read, convert and check the keywords of input.salvador. Stops with a clear message if a
 load_cw_regions            salvador/normalization.py      Reads the cw file: remove the duplciates and merge the overlapping regions
 main                       salvador/cli.py                Entry point of the salvador command (also: python -m salvador).
 mc_seed                    salvador/fitting.py            Reproducible seed for the Monte Carlo of one line: the same star, line, element and keyword
 measure_line               salvador/line_analysis.py      Measure one line: abundance (ABU, ABU2, MOLEC, ABU_GF, ABUF), isotopic ratio (ISOR) or
-merge_overlapping_regions  salvador/normalization.py      Merge overlapping wavelength regions [left, right]. Returns the arrays of the merged edges.
+model_name_codes           salvador/spectra_io.py         Atmospheric parameters as they are written in the names of the synthetic spectra.
 new_res_est                salvador/fitting.py            Measure the observed line between fit1 and fit2: FWHM, center and area, each the mean of a
 norm1                      salvador/normalization.py      Re-scale the observed spectrum using the sythetic one.
 norm2                      salvador/normalization.py      Normalization with continuum windows (NORM = 2): the mean flux in each window gives the
@@ -66,17 +70,22 @@ parallel_available         salvador/parallel.py           Number of worker proce
 PlotManager                salvador/plotting.py           Plot of a line, created once and updated after every fit: spectrum and synthetics (left),
 prepare_parallel_star      salvador/cli.py                Before starting the workers: compute the shared resources that workers would otherwise
 process_names_grid         salvador/spectra_io.py         Abundance offsets encoded in the names of grid synthetics (Fe: [M/H] + variation; alpha
+read_abu_var_rows          salvador/k2_interface.py       All the rows of an abundance-variation file: (keyword in capitals, element code, values),
 read_delta_file            salvador/k2_interface.py       Read an abundance-variation file: {element code: (value, keyword)} for its DELTA, GF and ABS
 read_fit_file              salvador/fit_files.py          Read a .fit file with pandas, with the error columns when the file has them.
 read_grid_file             salvador/spectra_io.py         Read a grid synthetic (cached, read-only arrays: see GRID_CACHE_SIZE).
-read_solar_data            salvador/elements.py           Read solar_abu.txt (next to salvador.py): one list of fields per row, comments (#) skipped.
+read_solar_data            salvador/elements.py           Read the table of solar abundances (default: solar_table_path()): one list of fields per
 read_spec                  salvador/spectra_io.py         Read an observed spectrum: FITS (wavelengths from CRVAL1, CDELT1 or CD1_1, CRPIX1) or ASCII
 read_two_columns           salvador/spectra_io.py         SPEED: fast reader for 2-column ASCII spectra. Same arrays as
 readsyn                    salvador/spectra_io.py         Read and broaden the grid synthetics. Returns wl_syn, the tuple of broadened spectra and
+replace_flag_column        salvador/fit_files.py          Replace the flag (last column) of each data row of a .fit file, in order (salvador-merge).
 run                        salvador/cli.py                Analysis of all the stars of the input file (cfg.input_stars): the former main block of
 run_k2                     salvador/k2_interface.py       Run K2 on ./input.k2. Returns 0 on success, like os.system('k2.py').
 select_backend             salvador/config.py             Non-interactive matplotlib backend (Agg) for automatic runs (INTER = n). Called by the
+select_grid_synthetics     salvador/spectra_io.py         Grid synthetics for one line and one set of atmospheric parameters.
 solar_table_path           salvador/elements.py           The table of solar abundances, solar_abu.txt, installed with salvador (salvador/data/).
+star_abundance_rows        salvador/summary.py            Rows of abundance_final.txt of one star: [Fe/H] first, then [X/Fe] of the other species
+stop_run                   salvador/cli.py                Stop the run (exit command 'e', or too many errors): temporary files are removed.
 strip_ion                  salvador/elements.py           Return the bare element symbol: 'FeII' -> 'Fe', 'FeIII' -> 'Fe', 'Fe' -> 'Fe'.
 write_line_result          salvador/cli.py                Write the results of one line, exactly as the former loop did.
 write_name_syn             salvador/k2_interface.py       Name of a synthetic spectrum in synth_out/, built from all the parameters that define it

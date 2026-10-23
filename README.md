@@ -19,7 +19,7 @@ The atmospheric parameters must be known: salvador does not determine them.
 It works in automatic or interactive mode, analyses several lines in parallel (automatic mode),
 and writes a PDF with the fit of every line.
 
-> **Status:** 1.0.0. The full manual is [docs/salvador_instructions.pdf](docs/salvador_instructions.pdf).
+> **Status:** 1.1.0. The full manual is [docs/salvador_instructions.pdf](docs/salvador_instructions.pdf).
 
 
 ## Requirements
@@ -105,9 +105,25 @@ All the keywords and files are described in the [manual](docs/salvador_instructi
 | --- | --- |
 | `salvador [input file]` | the analysis (default input file: `input.salvador`); also `python -m salvador` |
 | `salvador --check` | checks the installation |
-| `salvador-merge` | merges the `.fit` files of the same star and computes its abundances again, optionally with an external [Fe/H] (example list: [docs/example_merge_fit.txt](docs/example_merge_fit.txt)) |
+| `salvador-merge [list] [options]` | merges the `.fit` files of the same star and computes its abundances again, optionally with an external [Fe/H] and its error (example list: [docs/example_merge_fit.txt](docs/example_merge_fit.txt)); see below |
 | `salvador-regression [save]` | saves the results of a run as a reference / compares a new run with it |
 | `salvador-check-k2 [N]` | checks that the fast K2 calls of salvador give the same spectra and EWs as the standard ones |
+
+### salvador-merge
+
+The list file names the `.fit` files of each star, then the merged file, optionally followed by an
+external [Fe/H] and its error (asked if missing); stars are separated by `###`. The settings can be
+given on the command line; those that are missing are asked:
+
+```bash
+salvador-merge                                   # everything asked, as in the previous versions
+salvador-merge list.txt --solar 1 --flags keep   # use the flags of the .fit files
+salvador-merge list.txt --solar 1 --flags recalc --sclip 2.5 --ep 0 10 --ewr -6 -4.4
+```
+
+`--solar`: 1 = Caffau & Lodders, 2 = Grevesse & Sauval 1998, 3 = Magg et al. 2022, 4 = Asplund et
+al. 2009. `--flags recalc` recalculates the flags (EW and EP limits, sigma-clipping); `keep` uses
+those of the `.fit` files. The abundances are computed with the same functions as `salvador`.
 
 The functions are in the package `salvador`, one module per topic
 ([docs/FUNCTION_MAP.txt](docs/FUNCTION_MAP.txt)); `from salvador.utilities import *` gives all of them.

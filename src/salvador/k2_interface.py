@@ -6,6 +6,7 @@ import json
 import os
 import shutil
 import sys
+import zlib
 from collections import OrderedDict
 from pathlib import Path
 import numpy as np
@@ -14,7 +15,7 @@ from specutils import Spectrum
 
 from .config import BASE_DIR, SYNTH_OUT, WORK_DIR, abu_var_tmp_name, cfg, plt
 from .elements import get_element_symbol, strip_ion, symbol_map
-from .spectra_io import read_two_columns
+from .spectra_io import model_name_codes, read_two_columns
 
 
 ### =============================================================================================
@@ -307,6 +308,55 @@ def k2_linelist(w1, w2):
     return out
 
 
+LINELIST_RECORD = SYNTH_OUT / 'linelists.json'     # linelists used for the synthetics of synth_out/
+
+
+def linelist_fingerprint() -> dict | None:
+    """linelist.xkur (its text) and the size and modification time of each file it lists; None if
+    there is no linelist.xkur."""
+    if not os.path.isfile(K2_LINELIST):
+        return None
+    files = {}
+    for _, names in _parse_k2_linelist(K2_LINELIST):
+        for name in names:
+            try:
+                st = os.stat(name)
+                files[name] = [st.st_size, st.st_mtime]
+            except OSError:
+                files[name] = None
+    return {'linelist.xkur': Path(K2_LINELIST).read_text(), 'files': files}
+
+
+def check_synth_out_linelists() -> bool:
+    """NEW: warn if linelist.xkur, or a linelist it lists, changed since the synthetic spectra of
+    synth_out/ were computed: their names do not depend on the linelists, so they would be reused.
+    The linelists are recorded in synth_out/linelists.json when synth_out/ has no synthetic yet (or
+    no record, e.g. synthetics of a previous version). Returns True if they changed."""
+    current = linelist_fingerprint()
+    if current is None:
+        return False
+    try:
+        recorded = json.loads(LINELIST_RECORD.read_text())
+    except (OSError, ValueError):
+        recorded = None
+    has_spectra = SYNTH_OUT.is_dir() and any(SYNTH_OUT.glob('*.nb'))
+    if recorded is None or not has_spectra:
+        SYNTH_OUT.mkdir(parents=True, exist_ok=True)
+        LINELIST_RECORD.write_text(json.dumps(current, indent=1))
+        return False
+    if recorded == current:
+        return False
+    changed = sorted(n for n in set(recorded.get('files', {})) | set(current['files'])
+                     if recorded.get('files', {}).get(n) != current['files'].get(n))
+    if recorded.get('linelist.xkur') != current['linelist.xkur']:
+        changed.insert(0, 'linelist.xkur')
+    shown = ', '.join(changed[:5]) + (f' and {len(changed) - 5} more' if len(changed) > 5 else '')
+    print(f"WARNING: the linelists changed since the synthetic spectra in {SYNTH_OUT.name}/ were computed ({shown}). "
+          f"The synthetics already there are used as they are: to compute them with the new linelists, move or "
+          f"delete {SYNTH_OUT.name}/ (this warning is repeated until then).")
+    return True
+
+
 def cleanup_linelist_cut():
     """Remove the trimmed linelists (end of run)."""
     _trim_cache.clear()
@@ -387,56 +437,82 @@ def read_delta_file(file_name):
 
     return extracted_data
 
+def read_abu_var_rows(file_name) -> list[tuple[str, int, list[str]]]:
+    """All the rows of an abundance-variation file: (keyword in capitals, element code, values),
+    in the order of the file. Rows that cannot be read are skipped; [] if the file does not exist."""
+    rows = []
+    if not os.path.exists(file_name):
+        return rows
+    with open(file_name) as f:
+        for text_line in f:
+            fields = text_line.split()
+            if len(fields) >= 3:
+                try:
+                    rows.append((fields[0].upper(), int(fields[1]), fields[2:]))
+                except ValueError:
+                    print(f"Warning: Unable to convert line: '{text_line.strip()}' to numbers.")
+    return rows
+
+
+def _signed_code(value: float) -> str:
+    """A variation as in the names of the synthetics: 0.29 -> 'p029', -0.1 -> 'm010'.
+    FIX: round() instead of int() truncation. abs(0.29)*100 = 28.999999999999996, so int() gave
+    '028' and 0.28/0.29 shared the same cache name in synth_out."""
+    # sign of the value before rounding, as in the names written by the previous versions
+    return f"{'m' if value < 0 else 'p'}{int(round(abs(np.round(value, 2)) * 100)):03}"
+
+
 def write_name_syn(met, alpha, teff, logg, vt, l1, l2, file_abu_var, type_abu, zcode_str, quantity):
     """Name of a synthetic spectrum in synth_out/, built from all the parameters that define it
     (metallicity, alpha, Teff, logg, vt, wavelength range, abundance variations), so that a
-    synthetic computed once is found and reused."""
-    prefix = 'm' if met < 0 else 'p'
-    met_abs_scaled = int(round(abs(met) * 100))
-    met1 = f"{prefix}{met_abs_scaled:03d}"
+    synthetic computed once is found and reused.
 
-    teff1 = str(int(teff))
-    logg1 = f"{logg:.2f}".replace('.', '')
-    vt1 = f"{vt:.2f}".replace('.', '')
+    The rows of the abundance-variation file are encoded as follows (for each element K2 uses the
+    last row of a keyword, and so do the names):
+      DELTA, ABS  _<El>_p020, _<El>_abs<A x 100> (as before: the names of existing synthetics and
+                  of the grids do not change)
+      GF          _<El>_gfp020 (NEW: before, as DELTA, so a change of log gf and a change of
+                  abundance of the same size had the same name)
+      ISOR        _<El>_isor<ratio> (NEW: before, ignored, so the synthetics computed with another
+                  isotopic ratio in the file were reused). The ratio of an ISOR line is _ISOR_<El>_<ratio>.
+      others      (e.g. ISOF) _x<checksum of the rows> (NEW: before, ignored)
+    """
+    codes = model_name_codes(teff, logg, vt, met, alpha)
+    name_syn = 'a' + codes['met'] + 't' + codes['teff'] + 'g' + codes['logg'] + 'k' + codes['vt'] + '_cl_a' + codes['alpha']
 
-    alpha_codes = {1: 'p04', 2: 'p02', 3: 'p00', 4: 'm02', 5: 'm04'}    # K2 alpha code -> [alpha/Fe]
-    if alpha not in alpha_codes:
-        raise ValueError(f'alpha = {alpha}: must be 1-5 (K2 code of the alpha-enhancement)')
-    alpha1 = alpha_codes[alpha]
+    abundance, gf, isor, others = {}, {}, {}, []
+    for key, zcode, values in read_abu_var_rows(file_abu_var):
+        try:
+            if key in ('DELTA', 'ABS'):
+                abundance[zcode] = (float(values[0]), key)
+            elif key == 'GF':
+                gf[zcode] = float(values[0])
+            elif key == 'ISOR':
+                isor[zcode] = float(values[0])
+            else:
+                others.append(' '.join([key, str(zcode)] + values))
+        except ValueError:
+            print(f"Warning: Unable to convert line: '{key} {zcode} {' '.join(values)}' to numbers.")
 
-    l1 = str(l1)
-    l2 = str(l2)
+    def symbol(zcode):
+        return strip_ion(get_element_symbol(zcode, symbol_map))
 
-    name_syn = 'a'+met1+'t'+teff1+'g'+logg1+'k'+vt1+'_cl_a'+alpha1
+    for zcode in sorted(set(abundance) | set(gf)):
+        if zcode in abundance:
+            delta, key = abundance[zcode]
+            name_syn += f"_{symbol(zcode)}_abs{int(round(abs(np.round(delta, 2)) * 100)):03}" if key == 'ABS' else f"_{symbol(zcode)}_{_signed_code(delta)}"
+        if zcode in gf:
+            name_syn += f"_{symbol(zcode)}_gf{_signed_code(gf[zcode])}"
 
-    values = read_delta_file(file_abu_var)
-    for zcode, (delta, type_line) in sorted(values.items()):
-        elem_tmp = get_element_symbol(zcode, symbol_map)
-        elem_tmp = strip_ion(elem_tmp)
-
-        delta_arr = np.round(delta, 2)
-
-        #
-        # FIX: round() instead of int() truncation. abs(0.29)*100 = 28.999999999999996,
-        # so int() gave '028' and 0.28/0.29 shared the same cache name in synth_out.
-        prefix = 'm' if delta < 0 else 'p'
-        delta1 = f"{prefix}{int(round(abs(delta_arr) * 100)):03}"
-
-        #
-        delta2 = f"{int(round(abs(delta_arr) * 100)):03}"
-
-        #
-        if type_line == 'ABS':
-            name_syn += f"_{elem_tmp}_abs{delta2}"
-        else:
-            name_syn += f"_{elem_tmp}_{delta1}"
+    line_zcode = int(zcode_str) if type_abu == 'ISOR' else None
+    for zcode in sorted(isor):
+        if zcode != line_zcode:         # the ratio of an ISOR line is written below, as before
+            name_syn += f"_{symbol(zcode)}_isor{isor[zcode]:g}".replace('.', 'p')
+    if others:
+        name_syn += f"_x{zlib.crc32(chr(10).join(others).encode()):08x}"
 
     if type_abu == 'ISOR':
-        elem_tmp = get_element_symbol(zcode_str, symbol_map)
-        elem_tmp = strip_ion(elem_tmp)
-        quantity = f"{quantity:.0f}"
-
-        name_syn += f"_ISOR_{elem_tmp}_{quantity}"
+        name_syn += f"_ISOR_{symbol(zcode_str)}_{quantity:.0f}"
 
     name_syn += f"_{l1}_{l2}"
     return name_syn

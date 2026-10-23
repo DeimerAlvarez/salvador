@@ -101,14 +101,18 @@ def _update_grid_step(direction, abu, delta_arr, fl_syn_br, param1, window, reso
         return abu, delta_arr, fl_syn_br, wl_syn, fl_syn_nb
     return abu, delta_arr, fl_syn_br, wl_syn
 
-def get_type_input(prompt, target_type):
-    """Ask for a value until it can be converted to target_type (e.g. float)."""
+def get_type_input(prompt, target_type, valid=None, hint='Insert a valid value.'):
+    """Ask for a value until it can be converted to target_type (e.g. float) and, if valid (a
+    function) is given, valid(value) is True; hint is printed after a wrong value."""
     while True:
         try:
-            value = input(prompt)
-            return target_type(value)
+            value = target_type(input(prompt))
         except ValueError:
             print('Insert a valid value.')
+            continue
+        if valid is None or valid(value):
+            return value
+        print(hint)
 
 def confirm_resolution_change(old_resol, new_resol):
     # Whether to apply the new value
@@ -186,9 +190,8 @@ def measure_line(wvl, flux, sss, fit1, fit2, elem, param1, name_star, abu, wv_le
     # adding name_star to param1
     param1['name_star'] = name_star
 
-    # Copies of original arrays
-    wvl_orig, flux_orig = np.copy(wvl), np.copy(flux)
-    cshift_orig, wv_shift_orig = 1.0, 0.0
+    # Copies of original arrays (flux_orig: not normalized, for the commands dw and aw)
+    flux_orig = np.copy(flux)
     fit1_orig, fit2_orig = np.copy(fit1), np.copy(fit2)
     wv_left_orig, wv_right_orig = np.copy(wv_left), np.copy(wv_right)
 
@@ -392,6 +395,10 @@ def measure_line(wvl, flux, sss, fit1, fit2, elem, param1, name_star, abu, wv_le
         abu_orig = np.copy(abu)
         delta_arr_orig = None
 
+    # NEW: state of the spectrum before the first fit (normalized, with the local RV correction),
+    # restored by the command 'i' (before, the local RV correction was lost)
+    wvl_init, flux_init = np.copy(wvl), np.copy(flux)
+
     ### first calculation of the abundance or rotation and plot
     name_title = rf'{name_star} -- $T_{{\rm eff}}={teff}$ K -- $\log g={logg}$ -- $\xi={vt}$ km/s'
 
@@ -475,7 +482,7 @@ def measure_line(wvl, flux, sss, fit1, fit2, elem, param1, name_star, abu, wv_le
                 continue
 
             if answer == 'c':
-                cshift = get_type_input('new continuum value: ', float)
+                cshift = get_type_input('new continuum value: ', float, lambda v: v > 0, 'The value must be positive.')
                 flux = flux*cshift
                 refit(answer)
 
@@ -483,7 +490,7 @@ def measure_line(wvl, flux, sss, fit1, fit2, elem, param1, name_star, abu, wv_le
                 print(f'old left edge = {fit1:.2f}')
                 fit1 = get_type_input('new left edge: ', float)
                 while fit1 >= fit2:
-                    print('left edge >= right edge', float)
+                    print('left edge >= right edge')
                     fit1 = get_type_input('new left edge: ', float)
                 refit(answer)
 
@@ -500,7 +507,7 @@ def measure_line(wvl, flux, sss, fit1, fit2, elem, param1, name_star, abu, wv_le
                 print(f'old left_new edge = {wind_l1:.2f}')
                 fit3 = get_type_input('new left_new edge: ', float)
                 while fit3 >= arg_extra['wind_r1']:
-                    print('left edge >= right edge', float)
+                    print('left edge >= right edge')
                     fit3 = get_type_input('new left_new edge: ', float)
                 arg_extra['wind_l1'] = fit3
                 refit(answer)
@@ -522,7 +529,7 @@ def measure_line(wvl, flux, sss, fit1, fit2, elem, param1, name_star, abu, wv_le
 
             elif answer == 'res' and (tana.startswith(ABU_KEYS) or tana == 'ROTAT'):
                 print(f'old res = {resol}')
-                resol_new = get_type_input('new res: ', int)
+                resol_new = get_type_input('new res: ', int, lambda v: v > 0, 'The resolution must be positive.')
                 resol = confirm_resolution_change(resol, resol_new)
                 param1['res'] = resol
                 if tana.startswith(ABU_KEYS) and cfg.grid == 'y':
@@ -534,7 +541,13 @@ def measure_line(wvl, flux, sss, fit1, fit2, elem, param1, name_star, abu, wv_le
                 refit(answer)
 
             elif answer == 'dw' and cfg.type_norm == 2:
-                wtd = get_type_input('select window: ', int)
+                # FIX: only the number of a window shown in the plot (before, 0 deleted the last window
+                # and a number too large stopped salvador); at least 2 windows are needed by NORM = 2
+                if len(wv_left) <= 2:
+                    print('At least 2 continuum windows are needed: no window deleted.\n')
+                    continue
+                wtd = get_type_input(f'select window (1-{len(wv_left)}): ', int, lambda v: 1 <= v <= len(wv_left),
+                                     f'Insert the number of a window, from 1 to {len(wv_left)}.')
                 wv_left = np.delete(wv_left, wtd - 1)
                 wv_right = np.delete(wv_right, wtd - 1)
 
@@ -544,7 +557,8 @@ def measure_line(wvl, flux, sss, fit1, fit2, elem, param1, name_star, abu, wv_le
 
             elif answer == 'aw' and cfg.type_norm == 2:
                 new_wv_left = get_type_input('new left window: ', float)
-                new_wv_right = get_type_input('new right window: ', float)
+                new_wv_right = get_type_input('new right window: ', float, lambda v: v > new_wv_left,
+                                              'The right edge must be larger than the left edge.')
 
                 flux = flux_orig
 
@@ -588,23 +602,15 @@ def measure_line(wvl, flux, sss, fit1, fit2, elem, param1, name_star, abu, wv_le
                 refit(answer)
 
             elif answer == 'i':
-                resol, wv_shift, cshift, wvl, flux = resol_orig, wv_shift_orig, cshift_orig, wvl_orig, flux_orig
+                # FIX: the spectrum as at the first fit: normalized and with the local RV correction
+                resol, wvl, flux = resol_orig, np.copy(wvl_init), np.copy(flux_init)
                 fit1, fit2, wv_left, wv_right, abu = fit1_orig, fit2_orig, wv_left_orig, wv_right_orig, abu_orig
                 delta_arr = delta_arr_orig
                 arg_extra = kwargs.copy()
-
-                if cfg.type_norm == 2:
-                    flux = norm2(wv_left, wv_right, wvl, flux, fl_syn_norm2)
-
-                if cfg.type_norm == 1 and cfg.grid == 'n':
-                    wl_syn_tmp, fl_syn_tmp = autok(param1, delta, window)
-                    fl_syn_tmp = convolve_gauss2(wl_syn_tmp, fl_syn_tmp, resol)
-                    flux = norm1(wvl, flux, wl_syn_tmp.value, fl_syn_tmp.value)
+                param1['res'] = resol
 
                 if tana.startswith(ABU_KEYS) and cfg.grid == 'y':
                     wl_syn, fl_syn_br, _ = readsyn(sss, resol, line)
-                    if cfg.type_norm == 1:
-                        flux = norm1(wvl, flux, wl_syn.value, fl_syn_br[0].value)   # FIX: wl_syn_tmp does not exist in grid mode
                 elif tana.startswith(ABU_KEYS) and cfg.grid == 'n':
                     fl_syn_nb, fl_syn_br, wl_syn = fl_syn_nb_orig, fl_syn_br_orig, wl_syn_orig
                 refit(answer)

@@ -42,41 +42,6 @@ def norm1(wvl_obs, fl_obs, wvl_syn, fl_syn, continuum_delta=0.005):
     return fl_obs_renorm
 
 
-def merge_overlapping_regions(wv_left_raw, wv_right_raw):
-    """Merge overlapping wavelength regions [left, right]. Returns the arrays of the merged edges."""
-    if len(wv_left_raw) == 0:
-        return np.array([]), np.array([])
-
-    # 1. Pairs [start, end] sorted by 'start'
-    regions = sorted(zip(wv_left_raw, wv_right_raw))
-
-    merged_left = []
-    merged_right = []
-
-    # 2. Start from the first region
-    current_left, current_right = regions[0]
-
-    # 3. Itera sulle regioni rimanenti
-    for i in range(1, len(regions)):
-        next_left, next_right = regions[i]
-
-        # Check for an overlap
-        if next_left <= current_right:
-            # Overlap: extend the end of the current region
-            current_right = max(current_right, next_right)
-        else:
-            # No overlap: save the current region and start a new one
-            merged_left.append(current_left)
-            merged_right.append(current_right)
-            current_left, current_right = next_left, next_right
-
-    # 4. Add the last region
-    merged_left.append(current_left)
-    merged_right.append(current_right)
-
-    return np.array(merged_left), np.array(merged_right)
-
-
 def load_cw_regions(file_path):
     """Reads the cw file: remove the duplciates and merge the overlapping regions"""
     # --- 1. Read the file with pandas ---
@@ -131,9 +96,6 @@ def find_clipped_regions(wv_left_raw, wv_right_raw, wvl, fl):
     regions. Returns the arrays of their left and right edges."""
     wv_left_new = []
     wv_right_new = []
-
-    # merge overlapping regions
-    merged_left, merged_right = merge_overlapping_regions(wv_left_raw, wv_right_raw)
 
     for i in range(len(wv_left_raw)):
         l = np.where((wvl > wv_left_raw[i]) & (wvl < wv_right_raw[i]))

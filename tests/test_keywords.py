@@ -1,6 +1,9 @@
 """The keywords ABU2, ISOR, MOLEC and ROTAT, each on a real case (tests/data/keywords), with the
 stand-in for K2. The expected results are those of the runs with salvador 1.0.0, identical to the
-previous version of salvador (see the notes of each case)."""
+previous version of salvador (see the notes of each case), with the changes of 1.1.0 in the case
+ABU2: signed parameter errors (d_vt of the Fe line is -0.04), and the logg error is computed for
+ABU2 lines: the stand-in has no synthetic for logg + 0.10, so d_logg of the Mg line is 99.99 (the
+fit stopped by the missing synthetic gives 99.99) and so are the total errors of Mg."""
 import pytest
 
 from conftest import KEYWORDS, prepare_case, run_salvador
@@ -42,7 +45,9 @@ def runs(tmp_path_factory):
 def test_results_as_expected(runs, name):
     run = runs(name)
     assert run.returncode == 0, run.output
-    assert not [c for c in run.k2_calls if c.startswith('MISSING')]     # every synthetic from the cache
+    missing = [c for c in run.k2_calls if c.startswith('MISSING')]
+    # every synthetic from the cache, except the ABU2 fit with logg + 0.10 (see the docstring)
+    assert all(name == 'ABU2' and 'g087' in c for c in missing), missing
     for result in CASES[name][1]:
         assert rows(run.path / result) == rows(KEYWORDS / name / 'expected' / result), result
 
