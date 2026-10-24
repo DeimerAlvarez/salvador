@@ -2,7 +2,7 @@ cff-version: 1.2.0
 message: "If you use salvador in your research, please cite it as below (a paper is in preparation), together with K2 and the Kurucz codes."
 title: "salvador: chemical abundances of stars by spectral synthesis with the Kurucz codes"
 type: software
-version: 1.1.0
+version: 1.2.0
 license: MIT
 repository-code: "https://github.com/DeimerAlvarez/salvador"
 keywords:

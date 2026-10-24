@@ -1,0 +1,155 @@
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index b829cfe..56bd271 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -1,5 +1,14 @@
+ # Changelog
+ 
++## 1.2.0
++
++### Changed
++
++* The error due to logg (d_logg) is computed for every line, also for the neutral species (before:
++  only for ionized species and for `MOLEC`, `ABU2` and `ISOR` lines; 0.00 for the others). The
++  errors of [Fe/H] and [X/Fe] due to the atmospheric parameters change, and a run with the
++  parameter errors needs one more fit for each line of a neutral species.
++
+ ## 1.1.0
+ 
+ ### Fixed
+diff --git a/CITATION.cff b/CITATION.cff
+index 263591d..6f60c28 100644
+--- a/CITATION.cff
++++ b/CITATION.cff
+@@ -2,7 +2,7 @@ cff-version: 1.2.0
+ message: "If you use salvador in your research, please cite it as below (a paper is in preparation), together with K2 and the Kurucz codes."
+ title: "salvador: chemical abundances of stars by spectral synthesis with the Kurucz codes"
+ type: software
+-version: 1.1.0
++version: 1.2.0
+ license: MIT
+ repository-code: "https://github.com/DeimerAlvarez/salvador"
+ keywords:
+diff --git a/README.md b/README.md
+index 9a714dc..7d02727 100644
+--- a/README.md
++++ b/README.md
+@@ -20,7 +20,7 @@ It works in automatic or interactive mode, analyses several lines in parallel (a
+ and writes a PDF with the fit of every line.
+ 
+ <<<<<<< HEAD
+-> **Status:** 1.1.0. The full manual is [docs/salvador_instructions.pdf](docs/salvador_instructions.pdf).
++> **Status:** 1.2.0. The full manual is [docs/salvador_instructions.pdf](docs/salvador_instructions.pdf).
+ 
+ 
+ ## Requirements
+diff --git a/src/salvador/__init__.py b/src/salvador/__init__.py
+index db666c4..b871e9e 100644
+--- a/src/salvador/__init__.py
++++ b/src/salvador/__init__.py
+@@ -5,4 +5,4 @@ The command line tools are salvador, salvador-merge, salvador-regression and sal
+ The functions are in the modules of this package, one per topic (see salvador.utilities).
+ """
+ 
+-__version__ = '1.1.0'
++__version__ = '1.2.0'
+diff --git a/src/salvador/cli.py b/src/salvador/cli.py
+index 1c84084..b31bd14 100755
+--- a/src/salvador/cli.py
++++ b/src/salvador/cli.py
+@@ -72,9 +72,9 @@ def _norm2_window_warning(line: float, w_left: np.ndarray, w_right: np.ndarray)
+ 
+ def _analyse_line(task):
+     """Analysis of one line of the linelist: nominal fit (measure_line) and, if the star has the
+-    parameter errors, the fits with Teff + dTeff, logg + dlogg (ionized species, MOLEC and ABU2)
+-    and vt + dvt (EW > 50 mA). Returns a dictionary with the results; writes nothing (see
+-    write_line_result), so it can run in parallel workers."""
++    parameter errors, the fits with Teff + dTeff, logg + dlogg and vt + dvt (EW > 50 mA).
++    Returns a dictionary with the results; writes nothing (see write_line_result), so it can run in
++    parallel workers."""
+     tana, line, nelem, res, wv_l, wv_r, delta, ct_elem = task
+     S = STAR
+     wv, fl = S['wv'], S['fl']
+@@ -219,8 +219,7 @@ def _analyse_line(task):
+     elif ans == 'e':
+         return rec
+ 
+-    ### errors due to the parameters: each parameter is varied by its error (vt only for EW > 50 mA,
+-    ### logg only for ionized species, MOLEC and ABU2)
++    ### errors due to the parameters: each parameter is varied by its error (vt only for EW > 50 mA)
+     if T_err is not None and ans == 'r':
+         # FIX: a line rejected in the interactive mode has the 3 error columns too (99.99), so all the
+         # rows of the .fit file have the same columns (before, salvador-merge could not read them)
+@@ -259,14 +258,11 @@ def _analyse_line(task):
+             Abu_pT = perturbed_fit(f'Teff + {T_err:.0f} K', int(teff + T_err), logg, vt,
+                                    f"Variation of Teff: \u0394T = {T_err:.0f} [K] \n")
+ 
+-        ### +logg: ionized species, and (NEW) always for MOLEC and ABU2 (pressure-sensitive)
++        ### +logg: NEW (1.2.0) for every line (before: only ionized species, MOLEC, ABU2 and ISOR)
+         Abu_pg = Abu
+-        logg_msg = '---\nVariation of logg: \u0394logg = %.2f [dex] \n' % (g_err)
+-        if ("{:.2f}".format(nelem).endswith("01") or tana in ('MOLEC', 'ABU2')) and Abu!=99.99 and g_err != 0 and rec['flag'] == 0 and tana != 'ISOR':
+-            Abu_pg = perturbed_fit(f'logg + {g_err:.2f}', teff, float(logg + g_err), vt, logg_msg)
+-
+-        elif Abu!=99.99 and g_err != 0 and tana == 'ISOR':
+-            Abu_pg = perturbed_fit(f'logg + {g_err:.2f}', teff, float(logg + g_err), vt, logg_msg)
++        if Abu != 99.99 and g_err != 0 and rec['flag'] == 0:
++            Abu_pg = perturbed_fit(f'logg + {g_err:.2f}', teff, float(logg + g_err), vt,
++                                   '---\nVariation of logg: \u0394logg = %.2f [dex] \n' % (g_err))
+ 
+         ### +vt
+         Abu_pv = Abu
+diff --git a/tests/data/keywords/ABU2/expected/abundance_final.txt b/tests/data/keywords/ABU2/expected/abundance_final.txt
+index 7119434..cc42073 100644
+--- a/tests/data/keywords/ABU2/expected/abundance_final.txt
++++ b/tests/data/keywords/ABU2/expected/abundance_final.txt
+@@ -11,6 +11,6 @@
+ #E_X/H_PARAM	= atmospheric params error. Sum in quadrature of error due to Teff, logg, and vt 
+ #--------------------------------------------------------------------------------------------------------------
+ #STAR                            CODE  N_LIN    ABU  ERROR  E_INT  E_PARAM     A_ABS   E_XH E_XH_INT E_XH_PARAM
+-star10uc                        26.00      1  -1.08   0.09   0.03   0.09        6.44   0.09    0.03    0.09
++star10uc                        26.00      1  -1.08  99.99   0.03  99.99        6.44  99.99    0.03   99.99
+ star10uc                        12.00      1   0.56  99.99   0.04  99.99        7.02  99.99    0.02   99.99
+ #---------------------------------------
+diff --git a/tests/data/keywords/ABU2/expected/star10uc.fit b/tests/data/keywords/ABU2/expected/star10uc.fit
+index e47a639..2e881fe 100644
+--- a/tests/data/keywords/ABU2/expected/star10uc.fit
++++ b/tests/data/keywords/ABU2/expected/star10uc.fit
+@@ -5,5 +5,5 @@
+ #   FLAG = -3  (REJ. ABU)
+ #---------------------------------------
+ #SPECTRUM                           LINE   ELEM    ABU      EW      EP  log_gf    eMC  d_Teff d_logg  d_vt  flag_line
+-star10uc                        8804.624  26.00   6.44  145.58   2.279  -3.234   0.03   0.08   0.00  -0.04   1
++star10uc                        8804.624  26.00   6.44  145.58   2.279  -3.234   0.03   0.08  99.99  -0.04   1
+ star10uc                        8806.756  12.00   7.02   99.99  99.999  99.999   0.02   0.02  99.99   0.00   1
+diff --git a/tests/test_fixes_1_1.py b/tests/test_fixes_1_1.py
+index 6c538c9..978b721 100644
+--- a/tests/test_fixes_1_1.py
++++ b/tests/test_fixes_1_1.py
+@@ -59,6 +59,7 @@ def test_grid_errors_without_perturbed_synthetics(tmp_path):
+     fit = {r[1]: r for r in rows(path / f'{STAR}.fit')}
+     assert fit['7461.519'][8] == '99.99'                   # before: 0.00
+     assert fit['7711.721'][9] == '99.99'                   # Fe II: logg error
++    assert fit['7461.519'][9] == '99.99'                   # Fe I: logg error too (1.2.0)
+     assert 'Grid (Teff + 100 K): no synthetic spectra' in run.output
+     fe = [r for r in rows(path / 'abundance_final.txt') if r[1] == '26.00'][0]
+     assert fe[6] == '99.99'                                # E_PARAM not available
+diff --git a/tests/test_keywords.py b/tests/test_keywords.py
+index 65cb149..2010851 100644
+--- a/tests/test_keywords.py
++++ b/tests/test_keywords.py
+@@ -1,9 +1,10 @@
+ """The keywords ABU2, ISOR, MOLEC and ROTAT, each on a real case (tests/data/keywords), with the
+ stand-in for K2. The expected results are those of the runs with salvador 1.0.0, identical to the
+-previous version of salvador (see the notes of each case), with the changes of 1.1.0 in the case
+-ABU2: signed parameter errors (d_vt of the Fe line is -0.04), and the logg error is computed for
+-ABU2 lines: the stand-in has no synthetic for logg + 0.10, so d_logg of the Mg line is 99.99 (the
+-fit stopped by the missing synthetic gives 99.99) and so are the total errors of Mg."""
++previous version of salvador (see the notes of each case), with the changes of 1.1.0 and 1.2.0
++in the case ABU2: signed parameter errors (d_vt of the Fe line is -0.04), and the logg error is
++computed for every line (before 1.1.0: only ionized species): the stand-in has no synthetic for
++logg + 0.10, so d_logg of both lines is 99.99 (the fit stopped by the missing synthetic gives
++99.99) and so are the total errors."""
+ import pytest
+ 
+ from conftest import KEYWORDS, prepare_case, run_salvador

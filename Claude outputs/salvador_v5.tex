@@ -250,7 +250,7 @@ This file contains all the spectra and the relative information that will be use
 
 The layout of the lista.stars file is the following:
 \begin{itemize}
-    \item First column: contains the name of the spectrum that you want to analyze. The code reads both FITS and ASCII files, but the entire name of the spectrum must be provided in this column. In the case of an ASCII file, the wavelength (in $\angstrom$) and the flux must be in the first and second column\footnote{Suggestion: avoid to provide names longer than 25 characters. If you pass longer names, the code will work anyway, but the pdf titles will not look so nice.}. 
+    \item First column: contains the name of the spectrum that you want to analyze. The code reads both FITS and ASCII files, but the entire name of the spectrum must be provided in this column. In the case of an ASCII file, the wavelength (in $\angstrom$) and the flux must be in the first and second column. The spectrum can also be in another directory (e.g. {\bf spectra/star.fits}): the output files are named after the name of the file without the directory and the extension (e.g. {\bf star.fit}, {\bf star.pdf}) and are written in the working directory. The pixels with a NaN or infinite value (bad pixels) are not used, and a message gives their number\footnote{Suggestion: avoid to provide names longer than 25 characters. If you pass longer names, the code will work anyway, but the pdf titles will not look so nice.}. 
     \item Second column: is the effective temperature expressed in K.
     \item Third column: is the logarithm of the surface gravity.
     \item Fourth column: is the metallicity [M/H].
@@ -286,7 +286,9 @@ This file is present in the eighth column of the \textbf{lista.stars} file. Here
 
 If you do not need variations of individual spectra, you can provide the name of an empty file or of a non existing file. 
 
-This file is never modified by \texttt{salvador}: the abundance variations needed during the analysis are added to a temporary copy of the file, which is passed to \texttt{K2}.
+This file is never modified by \texttt{salvador}: the abundance variations needed during the analysis are added to a temporary copy of the file, which is passed to \texttt{K2}. The variation of the line under analysis is added at the end of the copy: since \texttt{K2} uses the last row of a keyword for a given element, it replaces a variation of the same kind given in the file for the same element.
+
+All the rows of the file are written in the names of the synthetic spectra saved in {\bf synth\_out} (Sect.~\ref{sect:working_flow}), so that a synthetic spectrum is reused only if it was calculated with the same variations: {\bf DELTA} and {\bf ABS} as, e.g., {\bf \_Ca\_p030} and {\bf \_Ca\_abs630}, {\bf GF} as {\bf \_Ca\_gfp030}, {\bf ISOR} as {\bf \_C\_isor9}, and the other keywords (e.g. {\bf ISOF}) with a short code computed from their rows.
 
 In Fig.~\ref{fig:abu_var} is displayed an example of the abundance variation file.
 
@@ -386,7 +388,9 @@ Generally, for most of the purposes (and in particular for the synthetic spectra
 
 N.B. you have to specify your path where the linelists are located.
 
-To make the calculation faster, for each line \texttt{salvador} passes to \texttt{K2} a reduced copy of the linelists, which contains only the transitions within 50~$\angstrom$ from the region of the line. The synthetic spectra are identical to those calculated with the complete linelists, but \texttt{K2} has to read only a small part of the files. These copies are written in the directory {\bf linelist\_cut} of the working directory, which is removed at the end of the run. The first time a linelist file is used, \texttt{salvador} checks it (only once, the result is saved in the file {\bf $\sim$/.cache/salvador/linelist\_index.json}). The file {\bf linelist.xkur} itself is never modified. 
+To make the calculation faster, for each line \texttt{salvador} passes to \texttt{K2} a reduced copy of the linelists, which contains only the transitions within 50~$\angstrom$ from the region of the line. The synthetic spectra are identical to those calculated with the complete linelists, but \texttt{K2} has to read only a small part of the files. These copies are written in the directory {\bf linelist\_cut} of the working directory, which is removed at the end of the run. The first time a linelist file is used, \texttt{salvador} checks it (only once, the result is saved in the file {\bf $\sim$/.cache/salvador/linelist\_index.json}). The file {\bf linelist.xkur} itself is never modified.
+
+The names of the synthetic spectra saved in {\bf synth\_out} do not depend on the linelists. For this reason, the linelists used for the synthetic spectra of {\bf synth\_out} are recorded in the file {\bf synth\_out/linelists.json} (the text of {\bf linelist.xkur}, and the size and date of each linelist file). If {\bf linelist.xkur} or one of its files changes, \texttt{salvador} prints a warning at every run: the synthetic spectra already in {\bf synth\_out} are used as they are, so to calculate them with the new linelists move or delete the directory {\bf synth\_out}.
 
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -396,7 +400,7 @@ To make the calculation faster, for each line \texttt{salvador} passes to \textt
 Once that you ran \texttt{salvador}, either in the interactive or automatic mode, the following files and directory will be produced:
 \begin{itemize}
     \item synth\_out: is a directory in which all the unbroadened synthetic calculated by \texttt{K2} are stored, together with the best fit of each line (see Sect.~\ref{sect:working_flow}). 
-    \item For each spectrum a ROOT\_NAME.fit file is generated, that contains the information about the lines analyzed, their abundances and other parameters. In Sect.~\ref{sect:fit_file} will be explained in detail the content of the .fit file. If for some lines you measured the isotopic ratio also a second file named ROOT\_NAME\_isor.fit is created. If for some lines you measured the rotational velocity ({\bf ROTAT}), also a file named ROOT\_NAME\_rot.fit is created (see Sect.~\ref{sect:rot_fit}). 
+    \item For each spectrum a ROOT\_NAME.fit file is generated, that contains the information about the lines analyzed, their abundances and other parameters. In Sect.~\ref{sect:fit_file} will be explained in detail the content of the .fit file. The lines are analyzed, and written in the .fit files and in the .pdf file, in order of wavelength. If for some lines you measured the isotopic ratio also a second file named ROOT\_NAME\_isor.fit is created. If for some lines you measured the rotational velocity ({\bf ROTAT}), also a file named ROOT\_NAME\_rot.fit is created (see Sect.~\ref{sect:rot_fit}). 
     \item For each spectrum a ROOT\_NAME.pdf file is generated. This file contains the plots of all the lines that were analyzed. In Fig.~\ref{fig:pdf_output} is displayed an example of the .pdf output for one line of Fe. N.B. in the plots, the yellow regions are displayed only when the keyword NORM = 2, in all the other cases they are not present.
     \item abundance\_final.txt: this is a file containing, for all the analyzed spectra, the abundances of the analyzed elements in the form [Fe/H] or [X/Fe], together with the corresponding errors. In Sect.~\ref{sect:abundance_final} will be explained in detail the content of the abundance\_final.txt file. If for some lines you measured the isotopic ratio also a second file named abundance\_final\_isor.txt is created. 
 \end{itemize}
@@ -433,6 +437,7 @@ Only in case the errors associated to the atmospheric parameters are provided in
     \item Tenth (seventh) column: the error in the abundance associated to a variation of $+\Delta \log$g. In this case the abundance is determined again, varying only $\log$g, while keeping T and $\xi$ fixed.
     \item Eleventh (eighth) column: the error in the abundance associated to a variation of $+\Delta \xi$. In this case the abundance is determined again, varying only $\xi$, while keeping T and $\log$g fixed.
 \end{itemize}
+Each of these errors is the difference between the abundance obtained with the varied parameter and the nominal one ($\rm \delta^{T_{eff}} = A(X)_{T_{eff}+\Delta T} - A(X)$), with its sign: for instance, the abundances of the Fe~I lines usually increase with T$_{\mathrm{eff}}$ (positive $\delta$), while those obtained with a larger $\xi$ are lower (negative $\delta$). The sign is used in the calculation of the errors of [X/Fe] (Sect.~\ref{sect:abundance_final}). The value is 99.99 when the abundance with the varied parameter could not be determined (for instance a line out of limit, or a synthetic spectrum missing in the grid, Sect.~\ref{sect:grid_option}), and for the lines rejected in interactive mode (keyword {\bf r}). In the previous versions of \texttt{salvador} (before 1.1.0) these columns contained the absolute values of the differences.
 
 Moreover, as a final column (ninth (sixth) or twelfth (ninth) depending on the presence of the errors in the atmospheric parameters) is provided a flag value for the lines. The possible values are:
 \begin{itemize}
@@ -443,7 +448,7 @@ Moreover, as a final column (ninth (sixth) or twelfth (ninth) depending on the p
     \item {\bf 1}: the line is used for the calculation of the final abundance ratio.   
 \end{itemize}
 
-flags $-2$ and $-1$ are not present in the ROOT\_NAME\_isor.fit file. 
+flags $-2$ and $-1$ are not present in the ROOT\_NAME\_isor.fit file; a rejected isotopic ratio is written as 99.99, with flag $-3$.  
 
 A detailed explanation of how the abundance errors due to the atmospheric parameters are computed will be provided in Sect.~\ref{sect:working_flow}. 
 
@@ -510,6 +515,7 @@ This file contains the final abundances and the corresponding errors for all the
           = \sqrt{(\delta_{X}^{T_{\mathrm{eff}}} - \delta_{Fe}^{T_{\mathrm{eff}}})^2 + (\delta_{X}^{\log g} - \delta_{Fe}^{\log g})^2 + (\delta_{X}^{\xi} - \delta_{Fe}^{\xi})^2}
           \label{eq:par_xfe}
     \end{equation}
+    where $\delta_{X}$ and $\delta_{Fe}$ are the means, over the lines used, of the differences (with their sign) given in the .fit file. Thanks to the sign, the errors due to the atmospheric parameters partly cancel for the species that change in the same way as Fe, and add up for the species that change in the opposite way (e.g. some ionized species with T$_{\mathrm{eff}}$). The lines with 99.99 are not used in these means; if no line of a species has the value, the errors that depend on it are 99.99.
     \item Eighth column: the absolute abundance in the form A(X).
     \item Ninth column: the final error relative to the abundance in the form [X/H]. It is calculated as the sum in quadrature of the following two errors (internal and relative to the parameters).
     \item Tenth column: the internal error, relative to the abundance [X/H]. It is calculated as for the sixth column, but avoiding the part relative to Fe.
@@ -584,12 +590,12 @@ If the Monte Carlo simulation is performed the error of the calculation is taken
 
 If in the input files also the errors in the atmospheric parameters are provided, then after the abundance A(X) is determined the procedure of analysis is repeated by varying the atmospheric parameters by the corresponding error. In this way also the errors arising by the errors in the adopted atmospheric parameters are taken into account.
 \begin{itemize}
-    \item In the first run the $\log$g and $\xi$ are kept fixed to their best values and only the T$_{\mathrm{eff}}$ is varied by its uncertainty. With these new set of parameters the procedure of abundance determination is repeated. The difference between this abundance and the original one is taken as the error in the abundance due to the temperature. 
-    \item In the second run, if the element under analysis in the ionized state T$_{\mathrm{eff}}$ and $\xi$  are kept fixed to their best values and only the $\log$g is varied. Again, the analysis is repeated and the difference in abundance is taken as the error due to the $\log$g. On the other hand, if the element is in the neutral state this step is ignored and the error in abundance due to $\log$g is set to 0.0 dex. This is due to two main factors, one physical and the other one computational. The physical reason is linked to the fact that a change in $\log$g has a direct impact in the electronic pressure ($P_e$), which in turn has an impact in the ionization equilibrium. Therefore, ionized elements are more sensitive to small changes in $\log$g than neutral counterparts. The computational reason instead is linked to the fact that the calculation of synthetic spectra to determine abundances is time consuming. With this little trick in case of a neutral element a certain amount of time is saved. 
+    \item In the first run the $\log$g and $\xi$ are kept fixed to their best values and only the T$_{\mathrm{eff}}$ is varied by its uncertainty. With these new set of parameters the procedure of abundance determination is repeated. The difference (with its sign) between this abundance and the original one is taken as the error in the abundance due to the temperature.  
+    \item In the second run T$_{\mathrm{eff}}$ and $\xi$ are kept fixed to their best values and only the $\log$g is varied. Again, the analysis is repeated and the difference in abundance (with its sign) is taken as the error due to the $\log$g. This is done for all the lines. A change in $\log$g has a direct impact on the electron pressure ($P_e$), which in turn has an impact on the ionization equilibrium: the ionized species are the most sensitive, but also the neutral species, the molecules (molecular equilibrium), and the wings of the strong lines (pressure broadening) can change. Before version 1.2.0 this step was performed only for the ionized species and for the keywords {\bf MOLEC}, {\bf ABU2}, and {\bf ISOR}, and for the other lines the error due to $\log$g was set to 0.0 dex to save time; now each line of a neutral species needs one more determination of the abundance.
     \item In the last run, if the line has an EW larger than a certain value (in this case our choice is $50 ~\mathrm{m}\angstrom$),  T$_{\mathrm{eff}}$ and $\log$g are kept fixed to their best values and only the $\xi$ is varied. Again, the analysis is repeated and the difference in abundance is taken as the error due to the $\xi$. If the line has a EW $< 50 ~\mathrm{m}\angstrom$ the error in the abundance due to $\xi$  is set to 0.0 dex. For the keywords {\bf MOLEC}, {\bf ABU2}, and {\bf ISOR} the EW is not calculated, so the variation of $\xi$ is always performed. As for the $\log$g variation this is a trick due to a physical and computational reasons. In this case the physical reason is due to the fact that only lines starting to deviate from the linear part of the curve of growth are sensitive to variations in $\xi$. Such lines are those with a high EW. The choice of $50 ~\mathrm{m}\angstrom$ is a good compromise.  
 \end{itemize}
 
-The errors arising from the variations in the atmospheric parameters are stored in the {\bf ROOT\_NAME}.fit file under the keywords d\_Teff, d\_logg, and d\_vt. In these additional runs only the abundance is determined: the plot, the EW, the Monte Carlo simulation, and the synthetic spectra at $\pm 0.2$ dex from the best fit (keyword {\bf CALC\_BEST}) are needed only for the nominal parameters and are skipped. The model atmospheres with the varied parameters are calculated by \texttt{K2} the first time they are needed and then reused. 
+The errors arising from the variations in the atmospheric parameters are stored, with their sign, in the {\bf ROOT\_NAME}.fit file under the keywords d\_Teff, d\_logg, and d\_vt (99.99 if the abundance with the varied parameter could not be determined). In these additional runs only the abundance is determined: the plot, the EW, the Monte Carlo simulation, and the synthetic spectra at $\pm 0.2$ dex from the best fit (keyword {\bf CALC\_BEST}) are needed only for the nominal parameters and are skipped. The model atmospheres with the varied parameters are calculated by \texttt{K2} the first time they are needed and then reused. 
 
 This procedure of analysis is repeated for every line associated to a given spectrum. After the entire analysis finishes the final abundances (in the form [Fe/H] or [X/Fe]) and the associated errors are calculated for each spectrum and stored in the {\bf abundance\_final.txt} file. For each element the final abundance is determined through a $\sigma$-clipping, with the values deviating more than $\rm N\times\sigma$ from the average that are rejected. The error is calculated according to all the caveats described above. 
 \begin{itemize}
@@ -615,7 +621,7 @@ If in the analysis were measured Fe lines (Fe~I or Fe~II), at the end also the f
         \label{fig:3plot_final_check}
 \end{figure}
 
-All the synthetic (and NOT broadened) spectra created during the analysis are stored in the directory {\bf synth\_out}. If the analysis is repeated, \texttt{salvador} checks if for a given spectrum and a given line the corresponding synthetic spectra are already present in the {\bf synth\_out} directory, in order to avoid the creation of new synthetic spectra. The name of each synthetic spectrum contains all the parameters that define it (atmospheric parameters, chemical mixture, spectral range, and abundance variations), so a synthetic spectrum is reused only when it is exactly the same. The only operation that is done on the synthetic is the convolution with the Gaussian function.
+All the synthetic (and NOT broadened) spectra created during the analysis are stored in the directory {\bf synth\_out}. If the analysis is repeated, \texttt{salvador} checks if for a given spectrum and a given line the corresponding synthetic spectra are already present in the {\bf synth\_out} directory, in order to avoid the creation of new synthetic spectra. The name of each synthetic spectrum contains all the parameters that define it (atmospheric parameters, chemical mixture, spectral range, and all the rows of the abundance variation file, Sect.~\ref{sect:abu_var}), so a synthetic spectrum is reused only when it is exactly the same. The names do not depend on the linelists: see Sect.~\ref{sect:linelist.xkur} for the warning printed when they change. The only operation that is done on the synthetic is the convolution with the Gaussian function.
 
 Additionally, in the {\bf synth\_out} directory, for each line, is stored a file named {\bf bestfit\_ROOT\_NAME\_line\_LINE.txt} which contains the convolved bestfit synthetic spectrum for a given line (always the one obtained with the nominal atmospheric parameters; not with a grid of precomputed synthetic spectra).
 The file is organized as follows: the first column contains the code of the element in the Kurucz format, the second column the wavelength of the line, the third the common wavelength for both the observed and the synthetic spectrum, the fourth the convolved bestfit flux of the synthetic, and the fifth the flux of the observed spectrum.
@@ -656,19 +662,19 @@ Once the spectrum is normalized and the 3 synthetic spectra are calculated, \tex
     \item {\bf y}: this keyword allows to save all the information for a given line (abundance, EW, plot, etc.) and move to the next line, once you are satisfied of the fit.
     \item {\bf r}: this keyword allows to discard a bad line (saturated, too weak, very low SNR, etc) and move to the next line.
     \item {\bf f}: this keyword calculates a new synthetic spectrum, in order to move the 3 synthetic spectra of the fit by one step (0.20 dex, or 10 for {\bf ISOR}, where the ratio cannot go below 1) towards the side where the $\chi^2$ decreases, as done automatically in the automatic mode. If the minimum of the $\chi^2$ is already inside the grid no new synthetic spectrum is needed and a message is printed. This keyword is not available with a grid of precomputed synthetic spectra and for the {\bf ROTAT} lines.
-    \item {\bf c}: this keyword allows to multiply the normalized spectrum by a certain factor in order to rigidly move it. You can use it if you are not satisfied by the normalization done by the code. 
+    \item {\bf c}: this keyword allows to multiply the normalized spectrum by a certain factor (positive) in order to rigidly move it. You can use it if you are not satisfied by the normalization done by the code.  
     \item {\bf wa}: this keyword allows to shift (in $\angstrom$) the observed spectrum. You can use to correct small shifts in wavelength between the observed and synthetic spectra. 
     \item {\bf f1, f2}: these keywords allow to modify the left and right extensions of the region where the line is defined. This region is the one used to calculate the $\chi^2$. If {\bf ABU2} is used also {\bf f3} and {\bf f4} are printed. All these keywords allow to modify the extension of the left and right wings.
     \item {\bf res}: this keyword allows to modify the resolution at which the synthetic spectra are convolved. If the new resolution differs from the old one by more than 50\% (ratio new/old outside 0.5--1.5) a confirmation is asked; if you do not confirm, the old resolution is kept. 
-    \item {\bf dw:} this keyword allows to delete a continuum region. Once the region is deleted, the spectrum is normalized again. This keyword works only when NORM = 2 is passed. 
-    \item {\bf aw}: this keyword allows to add a new region of continuum. Once the limits of the region are given, the observed spectrum is normalized again. This keyword works only when NORM = 2 is passed.
-    \item {\bf i}: this keyword allows to restore the initial values, thus erasing any action done on the observed spectrum. 
+    \item {\bf dw:} this keyword allows to delete a continuum region, giving its number as shown in the plot (only the numbers of the regions are accepted). Once the region is deleted, the spectrum is normalized again. At least 2 regions are needed for the normalization, so the last 2 regions cannot be deleted. This keyword works only when NORM = 2 is passed.
+    \item {\bf aw}: this keyword allows to add a new region of continuum (the right limit must be larger than the left one). Once the limits of the region are given, the observed spectrum is normalized again. This keyword works only when NORM = 2 is passed.
+    \item {\bf i}: this keyword allows to restore the initial values, thus erasing any action done on the observed spectrum: the spectrum, the limits, the continuum regions, the resolution, and the synthetic spectra are those of the first fit (normalized, and with the local RV correction of {\bf NPIX\_RV}, if used).  
     \item {\bf e}: this keyword allows to end the code. 
 \end{itemize}
 
 The same options are available for the {\bf ROTAT} lines (except {\bf f}): after each change the rotational velocity and the abundance are determined again, and the values saved with {\bf y} are those of the last fit.
 
-If the errors in the atmospheric parameters are provided (Sect.~\ref{sect:lista.stars}), the options are displayed also for each additional run with the varied parameters: in this case type {\bf y} to accept the fit. In interactive mode the lines are always analyzed one after the other: the keyword {\bf NPROC} is used only in automatic mode.
+If the errors in the atmospheric parameters are provided (Sect.~\ref{sect:lista.stars}), the options are displayed also for each additional run with the varied parameters: in this case type {\bf y} to accept the fit. In interactive mode the lines are always analyzed one after the other: the keyword {\bf NPROC} is used only in automatic mode. If a value given to an option is not valid (for instance a text instead of a number, or a resolution that is not positive), it is asked again.
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \section{Grid option} \label{sect:grid_option}
@@ -709,9 +715,13 @@ This is the name of a synthetic spectrum with metallicity [M/H] $= -1.40$ dex, T
 
 The names of all the synthetic in the synthetic filename must have this syntax. Also, the synthetic spectra should be NOT broadened, since \texttt{salvador} does a convolution with a Gaussian function. 
 
-For each line \texttt{salvador} uses the synthetic spectra whose name has exactly the T$_{\mathrm{eff}}$, $\log$g, and $\xi$ of the star (as written in the names, e.g. {\bf t4502}, {\bf g168}, {\bf k174}) and exactly the element of the line, and whose range includes the line. The metallicity of the names is not compared with that of the star: if the selected spectra have different metallicities, a warning is printed. All the synthetic spectra used for a line must have the same wavelength sampling. The path given with {\bf PATH\_SYN} can be absolute or relative to the working directory. With a grid of synthetic spectra \texttt{K2} is not needed, also with {\bf NPROC} $> 1$.
+For each line \texttt{salvador} uses the synthetic spectra whose name has exactly the T$_{\mathrm{eff}}$, $\log$g, $\xi$, [M/H], and $\alpha$-enhancement of the star (as written in the names, e.g. {\bf t4502}, {\bf g168}, {\bf k174}, {\bf am140}, {\bf ap04}) and exactly the element of the line, and whose range includes the line. If no synthetic spectrum has these values, the line is skipped with a message that lists the [M/H] and $\alpha$-enhancements present in the grid for that star and element: note that the [M/H] of the star in {\bf lista.stars} must be the same as in the names (e.g. $-0.78$ is not $-0.80$). If the line is in the ranges of more than one group of synthetic spectra (e.g. 5500--6810 and 6800--9000 $\angstrom$ for a line at 6805 $\angstrom$), only the group where the line is farthest from the edges of the range is used, and a message is printed; synthetic spectra with the same abundance are used only once. All the synthetic spectra used for a line must have the same wavelength sampling. The path given with {\bf PATH\_SYN} can be absolute or relative to the working directory. With a grid of synthetic spectra \texttt{K2} is not needed, also with {\bf NPROC} $> 1$.
 
-A limitation of the precomputed grid is the fact that if for a given element the abundance of the line analyzed is higher/lower than that present in the range of the synthetic, an incorrect value of abundance will be found since no further calculations of synthetic are performed. Also the syntax of the names is quite strict to the date.
+With a grid, the EW of a line is measured on the best-fit synthetic spectrum, between the limits of the line (fifth and sixth columns of the linelist), with the continuum equal to 1 (the synthetic spectra are normalized). The EP and $\log$gf are not available (99.999 in the .fit file): the limits in EP are not applied, and in the diagnostic plots of Fe the panel of the EP is empty.
+
+A limitation of the precomputed grid is that no further synthetic spectra can be calculated: if the abundance of the line analyzed is higher or lower than the range of the synthetic spectra, the $\chi^2$ minimum is found at the first or the last abundance of the grid. In automatic mode these lines are rejected (abundance 99.99, flag $-3$), as the lines out of limit in the automatic mode with \texttt{K2}; in interactive mode check the plot of the $\chi^2$. Also the syntax of the names is quite strict to the date.
+
+The grid option is not designed for the errors due to the atmospheric parameters, but they can be calculated if the grid contains also the synthetic spectra with the varied parameters, i.e. with T$_{\mathrm{eff}} + \Delta$T, $\log$g $+ \Delta\log$g, and $\xi + \Delta\xi$ in the names (for instance {\bf t4602} for T$_{\mathrm{eff}} = 4502$ K and $\Delta$T $= 100$ K), with the same [M/H], $\alpha$-enhancement, and element. When they are not present, the corresponding error is 99.99 and a message is printed (before version 1.1.0 the nominal synthetic spectra were used again, so these errors were always 0.00).
 
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -772,7 +782,10 @@ The directory {\bf tests} of the repository contains the automatic tests of the 
     \item Errors in the input files (a missing or invalid keyword in {\bf input.salvador}, see Sect.~\ref{sect:input.salvador}) stop \texttt{salvador} with a message that explains the problem. Warnings are printed for the keywords not recognized, for the rows of {\bf lista.stars} with incomplete errors on the atmospheric parameters, and for the rows of the linelist with an unexpected number of columns or with the same wavelength of a previous row. The lines that cannot be analyzed are skipped with a message (Sect.~\ref{sect:linelist}), and the spectra with a chemical mixture (fifth column of {\bf lista.stars}) different from 1--5 are skipped with a message.
     \item If the command {\bf k2.py} is not found, \texttt{salvador} stops at the beginning with a message (unless a grid of precomputed synthetic spectra is used).
     \item At the end of the run, the temporary files of \texttt{K2} in the working directory are deleted. Only the files written during the run are deleted, so your own files with similar names (e.g. starting with guess) are never touched.
-    \item If \texttt{K2} does not produce a synthetic spectrum, \texttt{salvador} stops with a message that indicates which spectrum is missing, where to find the messages of \texttt{K2}, and the most common causes (a wrong path in {\bf linelist.xkur}, a missing model atmosphere, the \texttt{Kurucz} executables not found).
+    \item If \texttt{K2} does not produce a synthetic spectrum, or the analysis of a line stops with any other error, the line is skipped with a message that indicates the problem (for a missing synthetic spectrum: which spectrum is missing, where to find the messages of \texttt{K2}, and the most common causes, i.e. a wrong path in {\bf linelist.xkur}, a missing model atmosphere, the \texttt{Kurucz} executables not found), and the analysis continues with the following line. If the error happens in a run with a varied atmospheric parameter, only that error is set to 99.99. If 3 lines in a row stop with an error, the problem most likely concerns all the lines (installation or input files), and \texttt{salvador} stops.
+    \item The pixels of the observed spectrum with a NaN or infinite value are not used, and a message gives their number.
+    \item With {\bf NORM = 2}, a warning is printed when all the continuum regions within 50~$\angstrom$ from a line are on the same side of the line: in this case the continuum at the line is extrapolated, so check the normalization in the plot.
+    \item A warning is printed when the linelists changed since the synthetic spectra of {\bf synth\_out} were calculated (Sect.~\ref{sect:linelist.xkur}).
     \item The warnings of \texttt{Python} (for instance a division by zero or a fit that did not converge) are shown once, in a short line that indicates the type of warning, the file and the line of code where it was produced. Only some known harmless warnings are hidden. If a warning appears often and you know it is harmless, you can hide it by adding the beginning of its message to the list {\bf HARMLESS\_WARNINGS} at the beginning of the file {\bf src/salvador/config.py} (with the editable installation).
 \end{itemize}
 
@@ -794,12 +807,24 @@ You can use it, running from terminal the command {\bf salvador-merge} in the di
 
 At this point (see Fig.~\ref{fig:merge_fit1}), you need to provide the name of a file containing the {\bf .fit} files that you want to merge in a unique file. 
 The file must be organized in the following way: in each row you provide each name of the {\bf .fit} files you want to merge, in the last row you provide the output name for the merged {\bf .fit} file (example, star1.fit). Then to move to other files to merge, you separate them from the previous ones with {\bf \#\#\#}.
-Finally, you can decide to use the [Fe/H] abundance directly from the {\bf .fit} files, or to use an external value. In this latter case, after the output name you have to provide the [Fe/H] value that will be used to scale the abundance ratios. 
-See Fig.~\ref{fig:merge_fit2} for a better visual explanation. 
+Finally, you can decide to use the [Fe/H] abundance directly from the {\bf .fit} files, or to use an external value. In this latter case, after the output name you have to provide the [Fe/H] value that will be used to scale the abundance ratios, followed by its error (e.g. {\bf star2.fit  -1.60  0.10}). If the error is not given, it is asked when the file is processed. The error of the external [Fe/H] is used as the internal error of Fe in the errors of [X/Fe]; the error due to the atmospheric parameters of [Fe/H] is not known (99.99). If no external [Fe/H] is given and the merged file has no Fe~I lines, the abundance ratios [X/Fe] are not calculated (99.99), while the absolute abundances A(X) and their errors are given.
+See Fig.~\ref{fig:merge_fit2} for a better visual explanation.
 
-Then you need to provide the solar reference you want to use to scale abundance ratios (they are coded with a number). 
-Finally, you need to provide a value (0 or 1) in which you specify if you want to use the original flags present in the single {\bf .fit} files (1) or if you want to recalculate the flags (0). 
-If you provide 0, then you have to provide the value for the $\sigma$-clipping, the EP\_min, EP\_max, EWR\_min, and EWR\_max. These values will be used to calculate the flags again, starting from all the lines with a measured abundance (also those rejected with the limits of the original analysis), and the final abundances. 
+Then you need to provide the solar reference you want to use to scale abundance ratios (they are coded with a number from 1 to 4: 1 for \citet{caffau_11} and \citet{lodders_10}, 2 for \citet{grevesse_98}, 3 for \citet{magg_22}, 4 for \citet{asplund_09}).
+Finally, you need to provide a value (0 or 1) in which you specify if you want to use the original flags present in the single {\bf .fit} files (1) or if you want to recalculate the flags (0).
+If you provide 0, then you have to provide the value for the $\sigma$-clipping, the EP\_min, EP\_max, EWR\_min, and EWR\_max. These values will be used to calculate the flags again, starting from all the lines with a measured abundance (also those rejected with the limits of the original analysis), and the final abundances. The limits in EWR are not applied to the lines without an EW (e.g. molecules), as the limits in EP are not applied to the lines without an EP. Only valid answers are accepted: if a value is not valid (e.g. a solar reference different from 1--4, a negative $\sigma$, or a maximum smaller than the minimum), it is asked again.
+
+The settings can also be given on the command line; those that are not given are asked as described above:
+{\small
+\begin{verbatim}
+salvador-merge list.txt --solar 1 --flags keep
+salvador-merge list.txt --solar 1 --flags recalc --sclip 2.5 \
+               --ep 0 10 --ewr -6 -4.4
+\end{verbatim}
+}
+where {\bf list.txt} is the file with the {\bf .fit} files to merge, {\bf -{}-solar} is the solar reference (1--4, as above), {\bf -{}-flags keep} uses the flags of the {\bf .fit} files (answer 1) and {\bf -{}-flags recalc} calculates them again (answer 0) with the $\sigma$-clipping ({\bf -{}-sclip}) and the limits in EP ({\bf -{}-ep}) and EWR ({\bf -{}-ewr}). With all the settings on the command line (and the errors of the external [Fe/H] in the list file), {\bf salvador-merge} asks nothing, and can be used in a script. {\bf salvador-merge -{}-help} prints all the options.
+
+The final abundances, their errors, and the flags are calculated with the same functions used by \texttt{salvador}, so the two commands give the same values for the same lines. {\bf .fit} files with and without the errors due to the atmospheric parameters can be merged: for the lines without them the merged file contains 99.99, and these values are not used in the errors (Sect.~\ref{sect:abundance_final}).
 
 For each merged {\bf .fit} file also a .pdf file with the three diagnostic plots of Fe (Sect.~\ref{sect:working_flow}) is created.
 
@@ -813,7 +838,7 @@ For each merged {\bf .fit} file also a .pdf file with the three diagnostic plots
 \begin{figure}[h]
         \centering
         \includegraphics[width=7cm]{figures/input_file_merge_fit.png}
-        \caption{Example of how the input\_file for {\bf salvador-merge} should be organized. In this specific case, 2 new {\bf .fit} files will be created, {\bf star1.fit} and {\bf star2.fit}. For the second file [Fe/H] $= -1.60$ will be used to scale all the abundance ratios, as it is provided by the user, while for the first file [Fe/H] will be determined from the Fe lines present. }
+        \caption{Example of how the input\_file for {\bf salvador-merge} should be organized. In this specific case, 2 new {\bf .fit} files will be created, {\bf star1.fit} and {\bf star2.fit}. For the second file [Fe/H] $= -1.60$ will be used to scale all the abundance ratios, as it is provided by the user, while for the first file [Fe/H] will be determined from the Fe lines present. Since version 1.1.0 the error of the external [Fe/H] can be given after its value (e.g. {\bf star2.fit -1.60 0.10}); otherwise it is asked. }
         \label{fig:merge_fit2}
 \end{figure}
 
@@ -838,7 +863,7 @@ This appendix is useful only if you want to read or modify the code. The code is
         normalization.py & normalization of the spectra (NORM) and continuum regions \\
         fitting.py & resolution, convolution, abundance of a line ($\chi^2$), Monte Carlo \\
         rotation.py & rotational velocity of a line \\
-        plotting.py & plots of the lines \\
+        plotting.py & plots of the lines, diagnostic plots of Fe \\
         summary.py & final abundances: mean, $\sigma$-clipping, errors \\
         line\_analysis.py & analysis of one line (measure\_line): first fit, interactive menu, automatic mode \\
         parallel.py & parallel analysis of the lines (NPROC) \\

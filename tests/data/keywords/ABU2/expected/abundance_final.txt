@@ -11,6 +11,6 @@
 #E_X/H_PARAM	= atmospheric params error. Sum in quadrature of error due to Teff, logg, and vt 
 #--------------------------------------------------------------------------------------------------------------
 #STAR                            CODE  N_LIN    ABU  ERROR  E_INT  E_PARAM     A_ABS   E_XH E_XH_INT E_XH_PARAM
-star10uc                        26.00      1  -1.08   0.09   0.03   0.09        6.44   0.09    0.03    0.09
+star10uc                        26.00      1  -1.08  99.99   0.03  99.99        6.44  99.99    0.03   99.99
 star10uc                        12.00      1   0.56  99.99   0.04  99.99        7.02  99.99    0.02   99.99
 #---------------------------------------

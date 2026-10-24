@@ -59,6 +59,7 @@ def test_grid_errors_without_perturbed_synthetics(tmp_path):
     fit = {r[1]: r for r in rows(path / f'{STAR}.fit')}
     assert fit['7461.519'][8] == '99.99'                   # before: 0.00
     assert fit['7711.721'][9] == '99.99'                   # Fe II: logg error
+    assert fit['7461.519'][9] == '99.99'                   # Fe I: logg error too (1.2.0)
     assert 'Grid (Teff + 100 K): no synthetic spectra' in run.output
     fe = [r for r in rows(path / 'abundance_final.txt') if r[1] == '26.00'][0]
     assert fe[6] == '99.99'                                # E_PARAM not available

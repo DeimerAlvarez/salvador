@@ -19,7 +19,7 @@ The atmospheric parameters must be known: salvador does not determine them.
 It works in automatic or interactive mode, analyses several lines in parallel (automatic mode),
 and writes a PDF with the fit of every line.
 
-> **Status:** 1.1.0. The full manual is [docs/salvador_instructions.pdf](docs/salvador_instructions.pdf).
+> **Status:** 1.2.0. The full manual is [docs/salvador_instructions.pdf](docs/salvador_instructions.pdf).
 
 
 ## Requirements

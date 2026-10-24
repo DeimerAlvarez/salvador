@@ -72,9 +72,9 @@ def _norm2_window_warning(line: float, w_left: np.ndarray, w_right: np.ndarray) 
 
 def _analyse_line(task):
     """Analysis of one line of the linelist: nominal fit (measure_line) and, if the star has the
-    parameter errors, the fits with Teff + dTeff, logg + dlogg (ionized species, MOLEC and ABU2)
-    and vt + dvt (EW > 50 mA). Returns a dictionary with the results; writes nothing (see
-    write_line_result), so it can run in parallel workers."""
+    parameter errors, the fits with Teff + dTeff, logg + dlogg and vt + dvt (EW > 50 mA).
+    Returns a dictionary with the results; writes nothing (see write_line_result), so it can run in
+    parallel workers."""
     tana, line, nelem, res, wv_l, wv_r, delta, ct_elem = task
     S = STAR
     wv, fl = S['wv'], S['fl']
@@ -219,8 +219,7 @@ def _analyse_line(task):
     elif ans == 'e':
         return rec
 
-    ### errors due to the parameters: each parameter is varied by its error (vt only for EW > 50 mA,
-    ### logg only for ionized species, MOLEC and ABU2)
+    ### errors due to the parameters: each parameter is varied by its error (vt only for EW > 50 mA)
     if T_err is not None and ans == 'r':
         # FIX: a line rejected in the interactive mode has the 3 error columns too (99.99), so all the
         # rows of the .fit file have the same columns (before, salvador-merge could not read them)
@@ -259,14 +258,11 @@ def _analyse_line(task):
             Abu_pT = perturbed_fit(f'Teff + {T_err:.0f} K', int(teff + T_err), logg, vt,
                                    f"Variation of Teff: \u0394T = {T_err:.0f} [K] \n")
 
-        ### +logg: ionized species, and (NEW) always for MOLEC and ABU2 (pressure-sensitive)
+        ### +logg: NEW (1.2.0) for every line (before: only ionized species, MOLEC, ABU2 and ISOR)
         Abu_pg = Abu
-        logg_msg = '---\nVariation of logg: \u0394logg = %.2f [dex] \n' % (g_err)
-        if ("{:.2f}".format(nelem).endswith("01") or tana in ('MOLEC', 'ABU2')) and Abu!=99.99 and g_err != 0 and rec['flag'] == 0 and tana != 'ISOR':
-            Abu_pg = perturbed_fit(f'logg + {g_err:.2f}', teff, float(logg + g_err), vt, logg_msg)
-
-        elif Abu!=99.99 and g_err != 0 and tana == 'ISOR':
-            Abu_pg = perturbed_fit(f'logg + {g_err:.2f}', teff, float(logg + g_err), vt, logg_msg)
+        if Abu != 99.99 and g_err != 0 and rec['flag'] == 0:
+            Abu_pg = perturbed_fit(f'logg + {g_err:.2f}', teff, float(logg + g_err), vt,
+                                   '---\nVariation of logg: \u0394logg = %.2f [dex] \n' % (g_err))
 
         ### +vt
         Abu_pv = Abu

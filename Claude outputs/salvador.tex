@@ -1,0 +1,925 @@
+%                                                                 aa.dem
+% AA vers. 9.1, LaTeX class for Astronomy & Astrophysics
+% demonstration file
+%                                                       (c) EDP Sciences
+%-----------------------------------------------------------------------
+%
+%\documentclass[referee]{aa} % for a referee version
+%\documentclass[onecolumn]{aa} % for a paper on 1 column  
+%\documentclass[longauth]{aa} % for the long lists of affiliations 
+%\documentclass[letter]{aa} % for the letters 
+%\documentclass[bibyear]{aa} % if the references are not structured 
+%                              according to the author-year natbib style
+
+%
+\documentclass{aa}  
+
+\usepackage[utf8]{inputenc}
+\usepackage{natbib,twoopt}
+\usepackage[breaklinks=true]{hyperref} %% to avoid \citeads line fills
+\bibpunct{(}{)}{;}{a}{}{,}             %% natbib format for A&A and ApJ
+\usepackage{graphicx}
+\usepackage{array}
+\usepackage{txfonts}
+\usepackage{hyperref}
+\hypersetup{
+    colorlinks=true,
+    linkcolor=blue,
+    citecolor = blue,
+    filecolor=magenta,      
+    urlcolor=blue}
+%
+% ---------- macros ----------
+\newcommand{\angstrom}{\mbox{\normalfont\AA}}
+\newcommand{\todo}[1]{\textcolor{red}{[#1]}}
+\newcommand{\salvador}{salvador}   % name of the code: change here only
+
+
+\authorrunning{Alvarez Garay et al.}
+\titlerunning{---}
+
+\begin{document}
+
+%---------------------------------------------------------------------
+\title{salvador}
+\subtitle{A code for abundance determination through spectral synthesis}
+
+\author{D.~A. Alvarez Garay\inst{1}\fnmsep\thanks{Corresponding author:
+        \email{deimer.alvarez@inaf.it}}
+   \and \todo{friends}
+       }
+
+\institute{Osservatorio Astrofisico di Arcetri, Largo E. Fermi 5,
+           50125 Firenze, Italy
+          }
+
+%\date{Received ...; accepted ...}
+
+%---------------------------------------------------------------------
+\abstract
+{BLABLA}
+\keywords{techniques: spectroscopic --
+          methods: data analysis --
+          stars: abundances --
+          stars: atmospheres --
+          stars: rotation
+          }
+
+\maketitle
+
+%=====================================================================
+\section{Introduction}
+\label{sec:intro}
+%=====================================================================
+
+The chemical composition of stellar photospheres is one of the most
+powerful diagnostics in stellar and Galactic astrophysics. Chemical
+abundances trace the nucleosynthetic history of the gas from which
+stars formed, the mixing processes that modify the surface
+composition along stellar evolution, and the self-enrichment
+processes responsible for the multiple populations observed in
+globular clusters \citep[GCs; e.g.,][]{Bastian2018, Gratton2019}. In
+the last two decades, large spectroscopic surveys such as APOGEE
+\citep{Majewski2017}, the Gaia-ESO Survey \citep{Gilmore2022}, and
+GALAH \citep{Buder2021}, together with multi-object and integral-field
+spectrographs such as FLAMES \citep{Pasquini2002} and MUSE
+\citep{Bacon2010}, and very high-resolution spectrographs such as
+ESPRESSO \citep{Pepe2021}, have provided spectra for hundreds of
+thousands of stars, with resolving powers ranging from
+$R\sim3000$ to more than 100\,000. This wealth of data requires
+analysis tools that are automatic and reproducible, while being
+flexible enough to deal with spectral features of very different
+nature: weak and strong atomic lines, blended features, molecular
+bands, and transitions affected by hyperfine or isotopic splitting.
+
+Chemical abundances are commonly derived following two approaches.
+In the first one, the equivalent widths (EWs) of isolated lines are
+measured, either by direct integration or by fitting analytical
+profiles \citep[e.g., with DAOSPEC or ARES;][]{Stetson2008,
+Sousa2007, Sousa2015}, and compared with the theoretical curve of
+growth computed for a given model atmosphere, as done for instance by
+MOOG \citep{Sneden1973}, GALA \citep{Mucciarelli2013}, and FAMA
+\citep{Magrini2013}. This approach is fast and naturally suited to the
+spectroscopic derivation of the atmospheric parameters through the
+excitation and ionization balance. However, it is restricted to
+unblended lines with a well-defined profile, and its reliability
+decreases at low and intermediate spectral resolution, in crowded
+spectral regions (as in metal-rich or cool stars), for strong lines
+with extended damping wings, and for features affected by hyperfine
+or isotopic splitting or by molecular blends. In the second approach,
+the observed spectrum is directly compared with synthetic spectra.
+Several codes adopt this strategy, either by computing the synthetic
+spectra on the fly, as in SME \citep{Valenti1996, Piskunov2017} and
+its Python implementation PySME \citep{Wehrhahn2023}, the
+synthesis driver of MOOG, BACCHUS \citep{Masseron2016} and TSFitPy
+\citep{Gerber2023}, both based on Turbospectrum
+\citep{AlvarezPlez1998, Plez2012}, iSpec \citep{BlancoCuaresma2014,
+BlancoCuaresma2019}, and FASMA \citep{Tsantaki2018}, or by
+interpolating within precomputed grids or libraries, as in MyGIsFOS
+\citep{Sbordone2014}, SP\_Ace \citep{Boeche2016}, and the APOGEE
+pipeline ASPCAP \citep{GarciaPerez2016}, which relies on the FERRE
+code \citep{AllendePrieto2006}. Data-driven methods, such as The
+Cannon \citep{Ness2015} and The Payne \citep{Ting2019}, represent a
+further step towards the fast analysis of very large samples. Many of
+these tools determine atmospheric parameters and chemical abundances
+simultaneously, often by fitting extended spectral regions.
+
+Despite this variety of tools, chemical abundances derived from the
+same spectra by different codes and groups can differ significantly,
+because of differences in the adopted model atmospheres, atomic data,
+continuum placement, line selection, and treatment of the line
+broadening \citep{Smiljanic2014, Hinkel2016, Jofre2019}. A full control
+of each step of the analysis, line by line, therefore remains
+essential, in particular when small abundance variations must be
+detected, as in the case of the multiple populations of GCs, or when
+the abundances rely on a few, possibly blended or saturated,
+spectral features.
+
+In this paper we present \salvador{}\footnote{The code is publicly
+available at \url{https://github.com/DeimerAlvarez/salvador}.}, a
+Python code designed to derive chemical abundances through spectral
+synthesis on a line-by-line basis. For each line, \salvador{} performs
+a $\chi^2$ minimization between the observed spectrum and a set of
+synthetic spectra in which only the abundance of the element under
+analysis is varied. The synthetic spectra are computed on the fly with
+the SYNTHE code \citep{Kurucz1993b, Sbordone2004, Kurucz2005}, adopting
+one-dimensional, plane-parallel, local thermodynamic equilibrium (LTE)
+ATLAS9 model atmospheres \citep{Kurucz1993, Kurucz2005} computed with the
+opacity distribution functions of the KOALA database
+\citep{Mucciarelli2026}, both
+managed through the Python code K2 (Mucciarelli et al., in prep.). Alternatively, \salvador{} can use a grid of
+precomputed synthetic spectra, calculated with any spectral synthesis
+code. \salvador{} does not derive the atmospheric parameters, which
+must be known beforehand, for instance from photometry or from the
+spectroscopic analysis described in Sect.~\ref{sec:gala}. The code is
+designed for the analysis of FGK stars, both in the optical and in the
+infrared domain, and it can handle spectra with resolving powers from
+$R\sim3000$, as those provided by MUSE, up to the very high resolution
+of ESPRESSO. Previous versions of \salvador{} have already been
+employed to derive chemical abundances in the GCs $\omega$~Centauri
+and M\,54 \citep{AlvarezGaray2024, AlvarezGaray2026}.
+
+Besides the standard derivation of abundances from the line profiles,
+\salvador{} implements a set of features that, to our knowledge, are
+not combined within a single code:
+\begin{enumerate}
+\item the abundance variation can be mimicked by an equivalent
+variation of the oscillator strength ($\log gf$) of the transitions of
+the species under analysis. In this way, the line opacity is modified
+while the chemical composition adopted in the synthesis, and therefore
+the ionization and molecular equilibria, the electron pressure, and
+the continuous opacity, remain those of the model atmosphere. The
+synthetic spectrum is thus fully consistent with the adopted model
+atmosphere, also for elements that are important electron donors
+(e.g., Mg, Si, and Fe) or that take part in the molecular equilibrium
+(e.g., C, N, and O);
+\item the spectral resolution can be estimated automatically for each
+line, by comparing the full width at half maximum of the observed
+line with that of the intrinsic (unbroadened) synthetic profile. This
+is particularly useful for multi-object and integral-field
+spectrographs, where the resolving power can vary with wavelength and
+across the detector;
+\item the abundances of strong, saturated lines can be derived from
+their wings only, excluding the line core, which is almost
+insensitive to the abundance and can be affected by departures from
+LTE;
+\item isotopic ratios, such as $^{12}$C/$^{13}$C and
+$^{6}$Li/$^{7}$Li, can be measured;
+\item the projected rotational velocity ($v\sin i$) can be derived
+from individual lines, either simultaneously with the abundance or at
+a fixed abundance;
+\item the uncertainties arising from the atmospheric parameters are
+computed line by line by repeating the full analysis with the
+perturbed parameters, and they are propagated keeping their sign, so
+that the sensitivities common to the element under analysis and to
+iron partially cancel out in the [X/Fe] abundance ratios. The internal
+uncertainties are estimated through Monte Carlo simulations based on
+the signal-to-noise ratio measured around each line.
+\end{enumerate}
+\salvador{} can be run both in an interactive mode, which allows the
+user to inspect and, when needed, adjust every fit (normalization,
+wavelength shift, fitting region, and resolution), and in a fully
+automatic mode, in which several lines can be analyzed in parallel.
+
+Although \salvador{} is designed and tested for FGK stars, it can in
+principle be applied also to M giants, since the TiO and H$_2$O line
+lists, which dominate the opacity in the spectra of the coolest
+stars, can be included in the computation of the synthetic spectra.
+However, because of the huge number of molecular transitions involved,
+the inclusion of these line lists makes the computation of each
+synthetic spectrum very time consuming, and we therefore recommend
+this option only for specific cases (Sect.~\ref{sec:synth_k2}).
+
+This paper is organized as follows. In Sect.~\ref{sec:overview} we
+give an overview of \salvador{} and of its input files and running
+modes. In Sect.~\ref{sec:synth} we describe the computation of the
+synthetic spectra. In Sect.~\ref{sec:method} we detail the analysis of
+the individual lines, and in Sect.~\ref{sec:errors} the estimate of
+the uncertainties. In Sect.~\ref{sec:implementation} we describe the
+implementation and the performance of the code. In
+Sect.~\ref{sec:gala} we present the new version of GALA, which
+derives the atmospheric parameters. In Sect.~\ref{sec:validation} we
+validate \salvador{} against synthetic spectra and benchmark stars,
+and in Sect.~\ref{sec:conclusions} we summarize our work.
+
+%=====================================================================
+\section{Overview of the code}
+\label{sec:overview}
+%=====================================================================
+
+\salvador{} is designed to measure, for each star, a list of spectral
+features defined by the user, keeping the analysis of every feature
+independent of the others. The main steps of the analysis are
+summarized in Fig.~\ref{fig:flowchart}. For each observed spectrum,
+the user provides the atmospheric parameters (effective temperature
+$T_{\rm eff}$, surface gravity $\log g$, metallicity [M/H], and
+microturbulent velocity $\xi$), the chemical mixture of the model
+atmosphere, the radial velocity (RV) of the star, and a line list
+specifying, for each feature, the kind of analysis to be performed,
+the wavelength and the species of the transition, the spectral
+resolution, the limits of the region where the fit is performed, and
+the initial abundance. The chemical mixture is chosen among five
+values of the $\alpha$-element enhancement, $[\alpha/{\rm
+Fe}]=-0.4$, $-0.2$, $0.0$, $+0.2$, and $+0.4$\,dex, matching the
+sampling of the KOALA grid of ATLAS9 opacity distribution functions
+\citep[ODFs;][]{Mucciarelli2026}. Optionally, the uncertainties of
+$T_{\rm eff}$, $\log g$, and $\xi$ can be given, in which case the
+corresponding uncertainties on the abundances are computed
+(Sect.~\ref{sec:errors_params}).
+
+The kind of analysis is set for each feature by a keyword, listed in
+Table~\ref{tab:keywords}. All the keywords share the same core
+(Sect.~\ref{sec:method}), that is, the comparison between the observed
+feature and a set of synthetic spectra that differ only in the quantity
+to be measured: the abundance of the element (or, equivalently, the
+$\log gf$ of its transitions), an isotopic ratio, or the projected
+rotational velocity. A file of abundance variations, associated with
+each spectrum, allows the user to change the abundance of any element
+with respect to the chemical mixture of the model atmosphere, or the
+isotopic composition of a species, in all the synthetic spectra of
+that star. This is useful, for instance, to include in the synthesis
+the known abundances of the elements that contribute to the blends of
+a given feature, as done by \citet{AlvarezGaray2024}, who fixed the N
+abundance when measuring Al from the doublet at 7835--7836\,\AA,
+contaminated by CN lines.
+
+\salvador{} can be run in two modes. In the automatic mode, all the
+features are analyzed without any intervention by the user, and
+several features can be analyzed in parallel
+(Sect.~\ref{sec:implementation}). In the interactive mode, the fit of
+each feature is displayed and the user can accept or reject it, or
+modify the ingredients of the fit (Sect.~\ref{sec:interactive}). In
+both modes, the synthetic spectra can be computed on the fly
+(Sect.~\ref{sec:synth_k2}) or taken from a grid of precomputed
+synthetic spectra (Sect.~\ref{sec:synth_grid}).
+
+For each spectrum, \salvador{} provides a file with the results of
+each feature (abundance, EW, excitation potential $\chi$, $\log gf$,
+and the uncertainties described in Sect.~\ref{sec:errors}), a
+document with the plots of all the fits, and diagnostic plots of the
+Fe abundances as a function of $\chi$, reduced EW, and wavelength,
+useful to check the adopted $T_{\rm eff}$ and $\xi$. The final
+abundance ratios, [Fe/H] and [X/Fe], of all the stars and their
+uncertainties are collected in a single table. The solar reference
+abundances can be chosen among those by \citet{Caffau2011} and
+\citet{Lodders2010}, which is the default and the reference mixture
+of the KOALA models \citep{Mucciarelli2026}, \citet{Grevesse1998},
+\citet{Asplund2009}, and \citet{Magg2022}.
+
+\begin{figure}
+\centering
+\fbox{\parbox[c][5cm][c]{0.9\hsize}{\centering
+\todo{Fig. 1: flowchart of salvador (input files $\rightarrow$
+normalization and local RV $\rightarrow$ synthetic spectra $\rightarrow$
+$\chi^2$ minimization $\rightarrow$ EW, Monte Carlo, parameter
+reruns $\rightarrow$ final abundances)}}}
+\caption{Schematic workflow of \salvador.}
+\label{fig:flowchart}
+\end{figure}
+
+\begin{table}
+\caption{Keywords defining the kind of analysis of each feature.}
+\label{tab:keywords}
+\centering
+\begin{tabular}{l >{\raggedright\arraybackslash}p{6.0cm}}
+\hline\hline
+Keyword & Analysis \\
+\hline
+ABU    & Abundance from the line profile (Sect.~\ref{sec:abu}). \\
+ABUF   & As ABU, but the EW includes all the transitions of the species
+         in the feature (e.g., the Li doublet at 6708\,\AA). \\
+ABU\_GF & As ABU, but the abundance variation is mimicked by a
+          variation of $\log gf$ (Sect.~\ref{sec:loggf}). \\
+ABU2   & Abundance from the wings of a strong line
+         (Sect.~\ref{sec:abu2}). \\
+MOLEC  & Abundance from a molecular feature
+         (Sect.~\ref{sec:molec}). \\
+ISOR   & Isotopic ratio (Sect.~\ref{sec:isor}). \\
+ROTAT  & $v\sin i$, with the abundance free or fixed
+         (Sect.~\ref{sec:rotat}). \\
+\hline
+\end{tabular}
+\end{table}
+
+%=====================================================================
+\section{Synthetic spectra}
+\label{sec:synth}
+%=====================================================================
+
+\subsection{Synthetic spectra computed on the fly}
+\label{sec:synth_k2}
+
+In its default configuration, \salvador{} computes the synthetic
+spectra with the SYNTHE code \citep{Kurucz1993b, Sbordone2004,
+Kurucz2005}, through the Python code K2 (Mucciarelli et al., in
+prep.), which manages both ATLAS9 and SYNTHE. For each star, K2
+computes a one-dimensional, plane-parallel, LTE ATLAS9 model
+atmosphere \citep{Kurucz1993, Kurucz2005} with the exact $T_{\rm
+eff}$, $\log g$, and [M/H] of the star, adopting the ODFs of the
+KOALA database \citep{Mucciarelli2026} for the chosen [$\alpha$/Fe]
+and interpolating them in [M/H] when needed. The KOALA ODFs are
+computed with the solar mixture by \citet{Caffau2011} and
+\citet{Lodders2010} and are available for $\xi=0$, 1, 2, 4, and
+8\,km\,s$^{-1}$ \citep{Mucciarelli2026}. \todo{confirm with A.M.:
+which ODF microturbulence is adopted by K2 for a given $\xi$} Each
+model atmosphere is computed only once and reused for all the
+features of the star and for all the following runs.
+
+SYNTHE computes the emergent spectrum at a resolving power of
+600\,000 in a spectral window centered on the feature, whose width is
+chosen by the user (a few \AA\ are usually enough) and is
+automatically enlarged when the fitting region requires it. The
+atomic and molecular line lists are those of the Kurucz/Castelli
+database\footnote{\url{https://wwwuser.oats.inaf.it/castelli/linelists.html}}
+\todo{or other line lists: specify those adopted by default in K2}.
+The line lists of TiO and H$_2$O can be included on request. The
+unbroadened synthetic spectra are convolved by \salvador{} with a
+Gaussian instrumental profile with the resolving power of the feature
+(Sect.~\ref{sec:resolution}), using the PyAstronomy package
+\citep{Czesla2019}, and resampled on the wavelength grid of the
+observed spectrum.
+
+The variations of the abundances (or of the isotopic ratios) required
+during the analysis are passed to K2 together with the variations
+given by the user in the file of abundance variations
+(Sect.~\ref{sec:overview}). Each unbroadened synthetic spectrum is
+stored with a name that encodes all the parameters that define it
+(atmospheric parameters, chemical mixture, spectral window, and all
+the abundance variations), so that a synthetic spectrum is computed
+only once and reused whenever the same spectrum is needed, either in
+the same run or in subsequent ones.
+
+As discussed in Sect.~\ref{sec:intro}, the TiO and H$_2$O line lists
+allow, in principle, the analysis of M giants, down to the lower
+boundary of the KOALA grid, $T_{\rm eff}=3750$\,K
+\citep{Mucciarelli2026}, at the cost of a dramatic increase of the
+computing time of each synthetic spectrum.
+
+\subsection{Grids of precomputed synthetic spectra}
+\label{sec:synth_grid}
+
+Alternatively, \salvador{} can work with a grid of precomputed,
+continuum-normalized, unbroadened synthetic spectra, provided by the
+user and calculated with any spectral synthesis code. For each feature,
+\salvador{} selects the synthetic spectra with exactly the atmospheric
+parameters, [M/H], and [$\alpha$/Fe] of the star, computed with
+different abundances of the element under analysis, and covering the
+wavelength of the feature. In this case, no new synthetic spectrum can
+be computed during the analysis. Therefore, the abundances that can be
+measured are limited to the range covered by the grid, and the features
+whose $\chi^2$ minimum falls at the edge of the grid are rejected in the
+automatic mode. The EWs are measured directly on the best-fit
+synthetic spectrum, while $\chi$ and $\log gf$ of the transitions are
+not available. The uncertainties due to the atmospheric parameters
+(Sect.~\ref{sec:errors_params}) can be computed only if the grid also
+includes the synthetic spectra with the perturbed parameters.
+
+%=====================================================================
+\section{Analysis of the spectral features}
+\label{sec:method}
+%=====================================================================
+
+\subsection{Continuum normalization and local wavelength alignment}
+\label{sec:norm}
+
+The observed spectrum, read from a FITS or ASCII file, is cleaned of
+the pixels with non-finite values and shifted to the rest frame with
+the RV provided by the user. Three options are available for the
+continuum normalization. The spectrum can be used as it is, if already
+normalized; it can be rigidly rescaled to a synthetic spectrum
+computed with the parameters of the star, by dividing it by the median
+observed flux at the wavelengths where the synthetic spectrum is within
+0.5\% of its maximum (i.e., at the continuum); or it can be normalized
+by using a set of continuum windows provided by the user. In the latter
+case, the pixels of each window that deviate by more than $5\sigma$
+from the median (with $\sigma$ estimated from the median absolute
+deviation) are removed, splitting the window into clean sub-windows,
+the mean flux in each sub-window defines a continuum point, and the
+continuum is obtained by interpolating these points with a cubic spline
+(or linearly when fewer than four points are available). Since in
+cool or metal-rich stars the continuum windows are rarely free of weak
+absorption features, the normalized spectrum is then multiplied by the
+mean level of the synthetic spectrum of the star in the same windows,
+interpolated in the same way. This procedure takes into account the
+pseudo-continuum predicted by the synthesis and avoids an
+underestimate of the continuum level in crowded spectral regions.
+
+Residual wavelength offsets between the observed and the synthetic
+spectra, due for instance to uncertainties in the RV or in the
+wavelength calibration, can be corrected locally. The center of the
+observed feature is measured as the mean between the center of a
+Gaussian fit and the midpoint of the two wavelengths at which the
+profile crosses its half depth. If the offset between this center and
+the laboratory wavelength is smaller than a tolerance set by the user
+(in pixels), the observed spectrum is shifted accordingly for the
+analysis of that feature.
+
+\subsection{Spectral resolution}
+\label{sec:resolution}
+
+The resolving power adopted to broaden the synthetic spectra can be
+specified for each feature in the line list. This allows the user to
+account for the variation of the resolving power with wavelength, or
+among different setups of the same instrument. Moreover, \salvador{}
+can estimate the resolving power directly from each observed feature.
+The full width at half maximum of the observed profile,
+FWHM$_{\rm obs}$, is measured as the mean of the values obtained from a
+Gaussian fit and from the half-depth crossings of a spline
+interpolation of the profile. The same measurement is performed on the
+unbroadened synthetic spectrum, after isolating the profile of the
+main transition from the adjacent ones, providing the intrinsic width
+FWHM$_{\rm syn}$, which includes the thermal, microturbulent, and
+damping broadening. Assuming that the instrumental profile is Gaussian,
+and approximating the intrinsic profile as Gaussian as well, the
+instrumental width and the corresponding resolving power are
+\begin{equation}
+{\rm FWHM}_{\rm ins} = \sqrt{{\rm FWHM}_{\rm obs}^2 -
+{\rm FWHM}_{\rm syn}^2}\,, \qquad
+R = \frac{\lambda}{{\rm FWHM}_{\rm ins}}\,.
+\label{eq:resolution}
+\end{equation}
+The estimated $R$ replaces the input value only if the relative
+difference between the two is larger than 2\% and smaller than a
+threshold chosen by the user, in order to protect the analysis
+against spurious estimates (e.g., in weak, noisy, or blended
+features). Since no macroturbulent broadening is included in the
+synthesis, the resolving power estimated in this way also absorbs the
+macroturbulence of the star, providing an effective Gaussian
+broadening kernel for the feature. 
+\subsection{Abundance determination}
+\label{sec:abu}
+
+For a given feature, the abundance of the element is derived by
+minimizing
+\begin{equation}
+\chi^2(A) = \sum_{i}
+\frac{\left[F_{{\rm obs},i} - F_{{\rm syn},i}(A)\right]^2}
+     {F_{{\rm syn},i}(A)}\,,
+\label{eq:chi2}
+\end{equation}
+where $F_{{\rm obs},i}$ and $F_{{\rm syn},i}(A)$ are the observed and
+synthetic normalized fluxes at the $i$-th pixel of the fitting region,
+and $A$ is the abundance of the element, $A({\rm X})=\log(N_{\rm
+X}/N_{\rm H})+12$. For a spectrum dominated by photon noise, the
+variance of the normalized flux at each pixel is $\sigma_i^2\simeq
+F_i/({\rm S/N})_{\rm c}^2$, where $({\rm S/N})_{\rm c}$ is the
+signal-to-noise ratio in the continuum. Therefore, Eq.~(\ref{eq:chi2})
+corresponds, apart from the constant factor $({\rm S/N})_{\rm c}^2$,
+which does not affect the position of the minimum, to the $\chi^2$ of a
+photon-noise-limited spectrum, with the variance of each pixel
+estimated from the model (Pearson's $\chi^2$). Additional noise sources,
+such as read-out noise and sky subtraction, are not taken into
+account. The limits of the fitting region are given by the
+user or determined automatically from the observed profile.
+
+The synthetic spectra needed to bracket the $\chi^2$ minimum are
+computed adaptively, to keep their number as small as possible
+(Fig.~\ref{fig:flowchart}). The first synthetic spectrum is computed with
+the initial abundance given in the line list. The integrated line
+depression, $\int(1-F)\,{\rm d}\lambda$, of the observed feature is
+compared with that of the synthetic one, to establish whether the
+abundance must be increased or decreased. A second synthetic spectrum
+is then computed with an abundance variation of 0.4\,dex in that
+direction. If the observed line depression lies between the two
+synthetic ones, a third synthetic spectrum is computed at the
+intermediate abundance; otherwise, two synthetic spectra are computed
+at 0.6 and 0.8\,dex from the initial abundance. In both cases, three
+synthetic spectra separated by 0.2\,dex are available. The $\chi^2$ of
+each of them is computed and, if the minimum is not bracketed, the set
+of three synthetic spectra is moved in steps of 0.2\,dex towards the
+decreasing $\chi^2$, until the minimum is bracketed or the abundance
+differs from the initial one by more than a threshold chosen by the user
+(3\,dex by default), in which case the feature is rejected.
+
+Once the minimum is bracketed, a fine grid of synthetic spectra with a
+step of 0.01\,dex is built by linear interpolation in abundance of the
+synthetic fluxes, pixel by pixel, between the synthetic spectra
+adjacent to the one with the lowest $\chi^2$, and the abundance that
+minimizes Eq.~(\ref{eq:chi2}) on this grid is adopted. The spacing of
+0.2\,dex between the computed synthetic spectra is a compromise between
+the number of syntheses and the accuracy of the linear interpolation of
+the flux, which degrades for larger spacings, in particular for
+saturated lines. Finally, the synthetic spectrum with the best-fit
+abundance is computed directly with SYNTHE, together with two synthetic
+spectra at $\pm0.2$\,dex, which are shown in the plot of the fit
+(Fig.~\ref{fig:fit_example}).
+
+After the abundance is determined, the EW of the feature is computed by
+K2 from a synthetic spectrum that includes only the transition under
+analysis (and its hyperfine or isotopic components) with the best-fit
+abundance. Alternatively, all the transitions of the same species
+falling in the feature can be included, as required for instance by the
+Li resonance doublet. The EW is not used to derive the abundance, but
+it provides the reduced EW, $\log({\rm EW}/\lambda)$, which is used,
+together with $\chi$, to select the features entering the final
+abundance (Sect.~\ref{sec:final_abu}) and to build the diagnostic plots
+of Fe.
+
+\begin{figure}
+\centering
+\fbox{\parbox[c][5cm][c]{0.9\hsize}{\centering
+\todo{Fig. 2: example of fit of an Fe~I line (tutorial star
+1500138 of M\,54, GIRAFFE HR18): observed spectrum, best fit,
+$\pm0.2$\,dex synthetic spectra, continuum windows, and $\chi^2$ as a
+function of $A$(Fe)}}}
+\caption{Example of the fit of a Fe\,{\sc i} line.}
+\label{fig:fit_example}
+\end{figure}
+
+\subsection{Abundances from the variation of the oscillator strength}
+\label{sec:loggf}
+
+When the abundance of an element is varied only in the spectral
+synthesis, the thermal and pressure structure of the model atmosphere,
+the electron pressure, and the continuous opacity remain those computed
+for the original chemical composition. This approach does not introduce
+significant errors as long as the abundance variation has a negligible
+impact on the opacity and on the ionization structure of the atmosphere
+\citep{Mucciarelli2026}. However, the spectral synthesis code
+recomputes the ionization and molecular equilibria with the new
+abundance, so that the synthetic spectrum is not computed with the
+same chemical composition as the model atmosphere. This inconsistency
+can become relevant for large abundance variations of the elements
+that provide most of the free electrons, such as Mg, which is the main
+electron donor in the atmospheres of FGK stars \citep{Mucciarelli2026},
+or of the elements involved in the molecular equilibrium, such as C,
+N, and O.
+
+\salvador{} offers the possibility to avoid this inconsistency. In LTE,
+the line absorption coefficient of a transition is proportional to the
+product $gf\,N_{\rm X}$ of its oscillator strength and of the number
+density of the absorbing element \citep[e.g.,][]{Gray2005}. Therefore,
+as far as the line opacity is concerned, a variation $\Delta$ of
+$\log gf$ of the transitions of the species under analysis is
+equivalent to a variation $\Delta$ of $A$(X). With the keyword
+ABU\_GF, the synthetic spectra are computed by varying the $\log gf$ of
+these transitions instead of the abundance, while the chemical
+composition adopted in the synthesis is the same as that of the model
+atmosphere. The abundance is then $A({\rm X})=A_{\rm model}({\rm
+X})+\Delta$, where $A_{\rm model}({\rm X})$ is the abundance of the
+element in the model atmosphere and $\Delta$ is the best-fit variation
+of $\log gf$. In this way, the synthetic spectrum is fully consistent
+with the adopted model atmosphere. We note that neither approach is
+equivalent to the computation of a new model atmosphere with the
+derived abundance, which would require the opacity sampling technique
+of ATLAS12 \citep{Kurucz2005} or new ODFs; when the derived abundance
+differs significantly from that of the model atmosphere, the analysis
+should be iterated with a more appropriate chemical mixture.
+
+\subsection{Strong lines: abundances from the line wings}
+\label{sec:abu2}
+
+The core of strong, saturated lines is almost insensitive to the
+abundance and forms in the outermost layers of the atmosphere, where
+the assumptions of LTE and of a photospheric temperature structure are
+less reliable, and where the ATLAS9 models may not reach full
+convergence \citep{Mucciarelli2026}. On the other hand, the wings of
+these lines, dominated by collisional damping, are formed in deeper
+layers and remain sensitive to the abundance. With the keyword ABU2,
+the $\chi^2$ of Eq.~(\ref{eq:chi2}) is computed over two separate regions
+covering the blue and red wings of the line, excluding the core
+(Fig.~\ref{fig:abu2}). The rest of the analysis is the same as described
+in Sect.~\ref{sec:abu}. Since the damping wings depend on the gas
+pressure, the abundances derived from them are sensitive to $\log g$
+and to the chemical mixture of the model atmosphere
+\citep{Mucciarelli2026}, and an accurate estimate of the uncertainty
+due to $\log g$ is particularly relevant for these features
+(Sect.~\ref{sec:errors_params}).
+
+\begin{figure}
+\centering
+\fbox{\parbox[c][4cm][c]{0.9\hsize}{\centering
+\todo{Fig. 3: the same strong line fitted with ABU (core) and ABU2
+(wings), as in Fig. 8 of the manual}}}
+\caption{Comparison between the fit of a strong line performed on
+the core (keyword ABU, left) and on the wings (keyword ABU2, right).}
+\label{fig:abu2}
+\end{figure}
+
+\subsection{Molecular features}
+\label{sec:molec}
+
+With the keyword MOLEC, the abundance is derived from a molecular
+feature (e.g., CH, C$_2$, or CN bands) by varying the abundance of
+the element under analysis, as for the atomic lines. The abundances of
+the other elements forming the molecule can be fixed through the file
+of abundance variations, for instance the C abundance when N is derived
+from CN features. For these features, the EW, $\chi$, and $\log gf$ are
+not computed.
+
+\subsection{Isotopic ratios}
+\label{sec:isor}
+
+With the keyword ISOR, \salvador{} measures the ratio between the
+abundances of two isotopes of the same element, such as
+$^{12}$C/$^{13}$C from CN features or $^{6}$Li/$^{7}$Li from the Li
+resonance doublet. The procedure is the same as for the abundances, but
+the synthetic spectra are computed with different isotopic ratios,
+with steps of 10 between the computed synthetic spectra (20 for the
+first step), and the fine grid has a step of 1. The ratio is not allowed to go below unity. The
+elemental abundance adopted in the synthesis is fixed, and should be
+derived beforehand, for instance from features insensitive to the
+isotopic ratio. The isotopic fractions of elements with more than two
+isotopes can be set in the file of abundance variations.
+
+\subsection{Projected rotational velocity}
+\label{sec:rotat}
+
+With the keyword ROTAT, \salvador{} derives the projected rotational
+velocity, $v\sin i$, from a feature, either simultaneously with the
+abundance of the element or at a fixed abundance. A grid of synthetic
+spectra is computed with SYNTHE for abundances in steps of 0.1\,dex
+within a range set by the user around the initial abundance (a single
+abundance if it is kept fixed), and convolved with the instrumental
+profile. Each of them is then broadened with the rotational profile of
+\citet{Gray2005}, with a linear limb-darkening coefficient of 0.6, as
+implemented in PyAstronomy \citep{Czesla2019}, for $v\sin i$ values
+from a minimum to a maximum value (by default 0 and 60\,km\,s$^{-1}$)
+in steps of 10\,km\,s$^{-1}$. Since the rotational broadening is
+applied to the synthetic spectra already computed, a finer sampling in
+$v\sin i$ does not require any additional synthesis. The $\chi^2$ of
+Eq.~(\ref{eq:chi2}) is computed over this grid, and around its minimum
+a fine grid with steps of 1\,km\,s$^{-1}$ (within
+$\pm20$\,km\,s$^{-1}$) and 0.01\,dex (within $\pm0.2$\,dex) is built by
+cubic interpolation (linear when fewer than four nodes are available
+along an axis). The minimum of $\chi^2$ on the fine grid provides
+$v\sin i$ and the abundance. Their uncertainties are estimated with a
+Monte Carlo simulation, by adding to the best-fit spectrum Gaussian
+noise with a dispersion equal to that of the residuals of the fit, and
+repeating the search for the minimum (100 realizations by default).
+As no macroturbulent broadening is included in the synthesis, the
+derived $v\sin i$ includes any additional broadening not accounted for
+by the instrumental profile; values comparable to the expected
+macroturbulent velocity should therefore be regarded as upper limits.
+
+\begin{figure}
+\centering
+\fbox{\parbox[c][4cm][c]{0.9\hsize}{\centering
+\todo{Fig. 4: example of a ROTAT fit: best fit and spectra at
+$\pm10$\,km\,s$^{-1}$, and $\chi^2$ contours in the
+$A$(X)--$v\sin i$ plane with the Monte Carlo solutions}}}
+\caption{Example of the simultaneous determination of $v\sin i$ and
+abundance.}
+\label{fig:rotat}
+\end{figure}
+
+\subsection{Interactive mode}
+\label{sec:interactive}
+
+In the interactive mode, the fit of each feature is displayed and the
+user can accept it, reject it, or modify its ingredients: rescale the
+normalized spectrum by a constant factor, shift it in wavelength,
+change the limits of the fitting regions, change the resolving power,
+add or remove continuum windows (the spectrum is then normalized
+again), or move the set of synthetic spectra by one step towards the
+decreasing $\chi^2$. After each change the fit is repeated, and the
+initial configuration can be restored at any time. This mode is
+especially useful for the analysis of a few stars or of critical
+features (e.g., weak or blended lines, or lines in crowded spectral
+regions), and to define the fitting regions to be adopted in the
+automatic analysis of large samples.
+
+\subsection{Final abundances}
+\label{sec:final_abu}
+
+For each star and species, the abundances of the individual features
+are combined into a mean value. The features can be selected according
+to their $\chi$ and reduced EW, within limits chosen by the user, to
+exclude, for instance, strong lines that are more sensitive to $\xi$
+and to the damping constants, or features too weak to be reliably
+measured. A $\sigma$-clipping is then applied, adopting the median and
+the median absolute deviation as estimators of the center and of the
+dispersion, when at least three features are available. [Fe/H] is
+derived from the Fe\,{\sc i} lines, and the abundance ratios of the
+other species are provided as [X/Fe]. The absolute abundances $A$(X)
+and the [X/H] ratios are also provided.
+
+Different spectra of the same star, such as those obtained with
+different setups of a multi-object spectrograph, can be analyzed
+separately and their results merged afterwards, recomputing the final
+abundances and their uncertainties with the same procedure.
+
+%=====================================================================
+\section{Uncertainties}
+\label{sec:errors}
+%=====================================================================
+
+\subsection{Internal uncertainties}
+\label{sec:errors_int}
+
+For the species measured from fewer than ten features, the uncertainty
+of each feature due to the photon noise is estimated through a Monte
+Carlo simulation. The signal-to-noise ratio (S/N) is measured within
+$\pm20$\,\AA\ from the feature, either in the continuum windows or,
+when these are not available, on the flux after a $3\sigma$-clipping
+that removes the absorption features. Gaussian noise with a dispersion
+equal to (S/N)$^{-1}$ is added to the best-fit synthetic spectrum and
+the abundance is derived again from the fine grid of
+Sect.~\ref{sec:abu}. The procedure is repeated 200 times and, after
+discarding the 5\% of the highest and lowest values, the standard
+deviation of the derived abundances is adopted as the uncertainty. The
+random numbers are generated from a seed computed from the name of the
+spectrum, the wavelength, and the species of the feature, so that the
+results are fully reproducible, independently of the order in which
+the features are analyzed.
+
+The internal uncertainty of the mean abundance of a species is computed
+as $\sigma/\sqrt{N}$, where $\sigma$ is the standard deviation of the
+abundances of the $N$ features that survived the selection. When only
+one feature is available, the Monte Carlo uncertainty is adopted.
+
+\subsection{Uncertainties due to the atmospheric parameters}
+\label{sec:errors_params}
+
+When the uncertainties of the atmospheric parameters are provided, the
+analysis of each feature is repeated by varying, one at a time, $T_{\rm
+eff}$, $\log g$, and $\xi$ by their uncertainties, while keeping the
+other parameters fixed. New model atmospheres are computed by K2 for
+the perturbed parameters. For each feature and parameter $p$, the
+difference $\delta^{p}=A({\rm X})_{p+\Delta p}-A({\rm X})$ is stored
+with its sign. The variation of $\log g$ is performed for all the
+features. To save computing time, the variation of $\xi$ is performed
+only for the features
+with EW larger than 50\,m\AA, which are the most sensitive to this
+parameter, and for those whose EW is not computed (molecular features,
+line wings, and isotopic ratios).
+
+For each species, the mean values of $\delta^{T_{\rm eff}}$,
+$\delta^{\log g}$, and $\delta^{\xi}$ over the selected features are
+computed. The total uncertainties of [Fe/H] and [X/Fe] are then
+\begin{equation}
+\sigma_{\rm [Fe/H]} = \sqrt{\frac{\sigma_{\rm Fe}^2}{N_{\rm Fe}} +
+(\delta^{T_{\rm eff}}_{\rm Fe})^2 + (\delta^{\log g}_{\rm Fe})^2 +
+(\delta^{\xi}_{\rm Fe})^2}\,,
+\label{eq:err_feh}
+\end{equation}
+\begin{equation}
+\begin{split}
+\sigma_{\rm [X/Fe]} = \Bigg[\frac{\sigma_{\rm X}^2}{N_{\rm X}} &+
+\frac{\sigma_{\rm Fe}^2}{N_{\rm Fe}} +
+(\delta^{T_{\rm eff}}_{\rm X}-\delta^{T_{\rm eff}}_{\rm Fe})^2 \\
+&+ (\delta^{\log g}_{\rm X}-\delta^{\log g}_{\rm Fe})^2 +
+(\delta^{\xi}_{\rm X}-\delta^{\xi}_{\rm Fe})^2\Bigg]^{1/2},
+\end{split}
+\label{eq:err_xfe}
+\end{equation}
+where the internal terms $\sigma^2/N$ are replaced by the squared
+Monte Carlo uncertainty when only one feature is available. Since the
+differences are taken with their sign, the uncertainties due to the
+atmospheric parameters partially cancel out in [X/Fe] for the species
+that respond to the parameters as Fe does, while they add up for those
+that respond in the opposite way, as some ionized species with respect
+to $T_{\rm eff}$. The uncertainties of [X/H] are computed in the same
+way, without the terms relative to Fe. This approach neglects the
+covariances among the atmospheric parameters and should therefore be
+regarded as an upper limit to the real uncertainty.
+
+%=====================================================================
+\section{Implementation and performance}
+\label{sec:implementation}
+%=====================================================================
+
+\salvador{} is written in Python ($\geq3.10$) and relies on NumPy
+\citep{Harris2020}, SciPy \citep{Virtanen2020}, pandas
+\citep{McKinney2010}, Matplotlib \citep{Hunter2007}, Astropy
+\citep{Astropy2013, Astropy2018, Astropy2022}, specutils
+\citep{Specutils}, and PyAstronomy \citep{Czesla2019}. It is
+distributed as a Python package under the MIT license, and it can be
+installed with \texttt{pip} from the GitHub repository, together with
+a tutorial and a user manual. The code is organized in modules
+according to their task (input and output, normalization, synthesis,
+fitting, rotation, uncertainties, and final abundances), and all the
+settings of a run are read from a single input file, checked at the
+start of the run.
+
+Most of the computing time is spent in the calculation of the
+synthetic spectra. To reduce it, \salvador{} (i) runs K2 within its own
+Python process; (ii) passes to SYNTHE, for each feature, only the
+portion of the line lists within 50\,\AA\ from the spectral window,
+which provides synthetic spectra identical to those computed with the
+complete line lists; (iii) reuses the model atmospheres and the
+synthetic spectra already computed (Sect.~\ref{sec:synth_k2}); and
+(iv) in the automatic mode, analyzes several features in parallel,
+each in a separate process with its own working directory. The model
+atmospheres needed by all the features are computed before the parallel
+analysis starts, and the results are written in the same order as in
+the line list, so that the output is identical to that of a sequential
+run. As an example, the analysis of 25 lines in the GIRAFFE HR18
+spectrum of a giant star of M\,54 ([Fe/H]$\,=-1.54$\,dex), with the
+continuum normalized through continuum windows and the synthetic
+spectra computed in windows of 5\,\AA, required 3.4\,min with a single
+process and 52\,s with seven parallel processes (a speed-up of a
+factor of 3.9), on a laptop with an Intel Core Ultra 7 258V processor
+and 32\,GB of RAM. \todo{confirm: synth\_out initially empty (all
+models and synthetic spectra computed from scratch)? errors due to the
+atmospheric parameters computed?} The speed-up is lower than the number
+of processes because the total time is set by the slowest features and
+because the model atmospheres are computed before the parallel analysis
+starts.
+
+The reproducibility of the results is ensured by the seeded Monte Carlo
+simulations (Sect.~\ref{sec:errors_int}) and by a regression tool that
+compares the results of a run, value by value, with those of a
+reference run. A second tool verifies that the faster calls to K2
+provide synthetic spectra and EWs identical to those of the standard
+calls. A suite of automatic tests, which replaces K2 with the synthetic
+spectra of reference runs, is executed at every change of the code.
+
+%=====================================================================
+\section{A new version of GALA}
+\label{sec:gala}
+%=====================================================================
+\todo{to be written with A. Mucciarelli}
+
+%=====================================================================
+\section{Validation}
+\label{sec:validation}
+%=====================================================================
+\todo{synthetic spectra and benchmark stars}
+
+%=====================================================================
+\section{Conclusions}
+\label{sec:conclusions}
+%=====================================================================
+
+In this paper we presented \salvador{}, a Python code for the
+determination of chemical abundances through spectral synthesis,
+designed for the line-by-line analysis of FGK stars in the optical and
+infrared domains, from the low resolution of integral-field
+spectrographs such as MUSE ($R\sim3000$) to the very high resolution
+of ESPRESSO. For each feature, \salvador{} minimizes the $\chi^2$
+between the observed spectrum and a set of synthetic spectra that
+differ only in the quantity to be measured. The synthetic spectra are
+computed on the fly with ATLAS9 and SYNTHE through K2, adopting the
+KOALA opacity distribution functions \citep{Mucciarelli2026}, or taken
+from a grid of precomputed spectra calculated with any spectral
+synthesis code. An adaptive search keeps the number of syntheses
+small, and the minimum is refined on a grid with a step of 0.01\,dex
+obtained by interpolation of the synthetic fluxes.
+
+Besides the standard abundance analysis, \salvador{} combines within a
+single framework several features that are rarely available together:
+\begin{itemize}
+\item the abundance variation can be mimicked by a variation of the
+$\log gf$ of the transitions, keeping the chemical composition of the
+synthesis consistent with that of the model atmosphere;
+\item the resolving power can be estimated from each observed feature,
+accounting for the intrinsic width of the line;
+\item the abundances of saturated lines can be derived from their
+damping wings only, excluding the line core;
+\item isotopic ratios and the projected rotational velocity (with the
+abundance either free or fixed) can be measured;
+\item the uncertainties due to the photon noise are estimated through
+reproducible Monte Carlo simulations, and those due to the atmospheric
+parameters are computed line by line and propagated with their sign
+into the abundance ratios.
+\end{itemize}
+The interactive mode allows full control of every fit, while the
+automatic mode, with the analysis of several features in parallel,
+makes the code suitable for large spectroscopic samples.
+
+\todo{Summary of the validation on synthetic spectra and benchmark
+stars (Sect.~\ref{sec:validation}): accuracy and precision of the
+abundances, of $v\sin i$, and of the isotopic ratios.}
+
+\salvador{} does not derive the atmospheric parameters, which must be
+provided by the user. The new version of GALA presented in
+Sect.~\ref{sec:gala} fills this gap, and the two codes together provide
+a complete chain for the chemical analysis of stellar spectra, from
+the atmospheric parameters to the final abundances and their
+uncertainties. Future developments of \salvador{} will include the
+convolution of the synthetic spectra with non-Gaussian instrumental
+profiles and a continuum normalization based on a polynomial fit of
+the ratio between the observed and the synthetic spectra.
+\salvador{} is publicly available on GitHub, together with a user
+manual and a tutorial.
+
+
+\begin{acknowledgements}
+BLABLA
+\end{acknowledgements}
+
+\bibliographystyle{aa}
+\bibliography{salvador}
+
+\end{document}

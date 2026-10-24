@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.2.0
+
+### Changed
+
+* The error due to logg (d_logg) is computed for every line, also for the neutral species (before:
+  only for ionized species and for `MOLEC`, `ABU2` and `ISOR` lines; 0.00 for the others). The
+  errors of [Fe/H] and [X/Fe] due to the atmospheric parameters change, and a run with the
+  parameter errors needs one more fit for each line of a neutral species.
+
 ## 1.1.0
 
 ### Fixed
