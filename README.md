@@ -19,7 +19,7 @@ The atmospheric parameters must be known: salvador does not determine them.
 It works in automatic or interactive mode, analyses several lines in parallel (automatic mode),
 and writes a PDF with the fit of every line.
 
-> **Status:** 1.2.0. The full manual is [docs/salvador_instructions.pdf](docs/salvador_instructions.pdf).
+> **Status:** 1.3.0. The full manual is [docs/salvador_instructions.pdf](docs/salvador_instructions.pdf).
 
 
 ## Requirements
@@ -92,7 +92,7 @@ results.
 | Output | Content |
 | --- | --- |
 | `<spectrum>.fit` | the results of every line (abundance, EW, EP, log gf, Monte Carlo error, parameter errors, flag) |
-| `<spectrum>_isor.fit`, `<spectrum>_rot.fit` | isotopic ratios; rotational velocities |
+| `<spectrum>_isor.fit`, `<spectrum>_rot.fit` | isotopic ratios; rotational velocities (with the macroturbulence used and the upper/lower limits) |
 | `abundance_final.txt` (`_isor.txt`) | [Fe/H], [X/Fe], absolute abundances and errors of every star |
 | `<spectrum>.pdf` | the fit of every line and the Fe diagnostic plots |
 | `synth_out/` | the synthetic spectra computed by K2 (reused by later runs) and the best fit of every line |

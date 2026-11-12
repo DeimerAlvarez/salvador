@@ -3,4 +3,4 @@ NORM	 = 1
 WINDOW	 = 10
 INTER	 = n
 SCLIP	 = 3
-
+ROT_VMAC = 0

@@ -309,6 +309,13 @@ class PlotManager:
         err_rot = data.get('err_rot')
         err_abu = data.get('err_abu')
         rot_txt = f'{best_rot:.0f}' + (f' $\\pm$ {np.floor(err_rot + 0.5):.0f}' if err_rot is not None else '') + ' km/s'
+        if data.get('limit') == 'UL':
+            rot_txt = f'< {np.floor(data["rot_value"] + 0.5):.0f} km/s'
+        elif data.get('limit') == 'LL':
+            rot_txt = f'> {data["rot_value"]:.0f} km/s'
+        if data.get('vmac') is not None:
+            vmac_err = data.get('vmac_err') or 0.0
+            rot_txt += f'\n$v_{{mac}}$ = {data["vmac"]:.1f}' + (f' $\\pm$ {vmac_err:.1f}' if vmac_err else '') + ' km/s'
 
         # Clear the axis before drawing again
         self.ax2.clear()

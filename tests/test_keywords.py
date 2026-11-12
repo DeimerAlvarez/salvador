@@ -18,7 +18,9 @@ CASES = {
     'ISOR': ('y\n' * 20, ['CS29497-034_C_rv_isor.fit', 'abundance_final_isor.txt']),
     # interactive, NORM = 2, ABS abundances of N and O: no EW, EP and log gf for molecules
     'MOLEC': ('y\n' * 20, ['M54_LR2_1500138_norm_rvc.fit', 'abundance_final.txt']),
-    # automatic, NORM = 1, the optional columns of ROTAT (initial abundance, span, rotation range)
+    # automatic, NORM = 1, the optional columns of ROTAT (initial abundance, span, rotation range).
+    # Since 1.3.0 (exact broadening for each v sin i, upper limits): all the lines are upper limits
+    # (4 km/s = half the instrumental FWHM at R = 40000); before, 0-1 km/s.
     'ROTAT': (None, ['star37934_rot.fit']),
 }
 
@@ -68,3 +70,14 @@ def test_parameter_errors_in_fit_file(runs):
 def test_molecules_have_no_ew(runs):
     row = rows(runs('MOLEC').path / 'M54_LR2_1500138_norm_rvc.fit')[0]
     assert row[4:7] == ['99.99', '99.999', '99.999']
+
+
+def test_rotat_without_vmac_stops_before_k2(tmp_path):
+    # since 1.3.0 ROT_VMAC is mandatory when the linelist has ROTAT lines
+    path = tmp_path / 'run'
+    env = prepare_case(KEYWORDS / 'ROTAT', path)
+    (path / 'input.salvador').write_text(
+        ''.join(r for r in (path / 'input.salvador').read_text().splitlines(keepends=True) if not r.startswith('ROT_VMAC')))
+    run = run_salvador(path, env)
+    assert run.returncode != 0 and 'set the macroturbulence with ROT_VMAC' in run.output
+    assert run.k2_calls == []

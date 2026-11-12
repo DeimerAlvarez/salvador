@@ -29,6 +29,7 @@ from .line_analysis import ABU_KEYS, measure_line
 from .normalization import find_clipped_regions, load_cw_regions
 from .parallel import cleanup_parallel_work, ensure_models, init_parallel_worker, parallel_available
 from .plotting import fe_diagnostic_plot
+from .rotation import check_rotat_settings
 from .spectra_io import cleaning_tmp_files, model_name_codes, read_spec, select_grid_synthetics
 from .summary import extract_abu_isor, star_abundance_rows
 
@@ -213,7 +214,8 @@ def _analyse_line(task):
 
     elif ans in ['y', 'r'] and tana == 'ROTAT':
         rec.update(rotat=results['rot_fin'], err_rot=results['abu_err_mc'],
-                   abu_rot=results['abu_rot'], err_abu_rot=results['err_abu_rot'])
+                   abu_rot=results['abu_rot'], err_abu_rot=results['err_abu_rot'],
+                   vmac=results['vmac'], err_rot_vmac=results['err_rot_vmac'], limit=results['limit'])
         return rec      # no parameter errors for ROTAT (before, this case stopped with an error)
 
     elif ans == 'e':
@@ -306,16 +308,21 @@ def write_line_result(rec, abu_file, abu_file_isor, flags, kept):
         abu_file_rot = name_star + '_rot.fit'
         if not os.path.exists(abu_file_rot):
             with open(abu_file_rot, 'w') as f:
-                f.write('#SPECTRUM                           LINE   ELEM    ROT   eROT    ABU   eABU\n')
+                f.write('#   LIM = D (measurement), UL (upper limit), LL (lower limit: ROT = ROT_MAX)\n')
+                f.write('#   VMAC = macroturbulence used in the fit [km/s]; eROTv = error of ROT due to the error of VMAC\n')
+                f.write('#   (eROT: Monte Carlo error; for an upper limit ROT includes both)\n')
+                f.write('#SPECTRUM                           LINE   ELEM    ROT   eROT  eROTv    ABU   eABU   VMAC  LIM\n')
         # rejected line (r): 99.99, as in the abundance files (with 0 decimals it would read 100)
         rot_txt = '99.99' if rec['rotat'] == 99.99 else f"{rec['rotat']:>5.0f}"
         # error of the rotation as an integer (km/s), rounded half up
         err_txt = '99.99' if rec['err_rot'] == 99.99 else f"{int(np.floor(rec['err_rot'] + 0.5)):>5d}"
         # absolute abundance of the rotation fit and its Monte Carlo error (0.00 if the abundance is fixed)
+        err_vmac_txt = '99.99' if rec['err_rot_vmac'] == 99.99 else f"{rec['err_rot_vmac']:>5.1f}"
         abu_txt = f"{rec['abu_rot']:>5.2f}"
         err_abu_txt = f"{rec['err_abu_rot']:>5.2f}"
         with open(abu_file_rot, 'a') as f:
-            f.write(f"{name_star:<30}  {line:>8.3f}  {nelem:>5.2f}  {rot_txt:>5}  {err_txt:>5}  {abu_txt:>5}  {err_abu_txt:>5}\n")
+            f.write(f"{name_star:<30}  {line:>8.3f}  {nelem:>5.2f}  {rot_txt:>5}  {err_txt:>5}  {err_vmac_txt:>5}  {abu_txt:>5}  {err_abu_txt:>5}  "
+                    f"{rec['vmac']:>5.1f}  {rec['limit']:>3}\n")
 
     elif ans == 'e':
         stop_run()
@@ -551,6 +558,10 @@ def run() -> None:
             print(f"Linelist {linelist_file} does not exist")
             continue
 
+        # NEW: ROTAT lines need the macroturbulence (ROT_VMAC): checked before any K2 call
+        if np.any(T_ABU == 'ROTAT'):
+            check_rotat_settings(teff, logg)
+
         ### exclusion of all the lines outside the spectrum
         index = (LINES >= min(wv)) & (LINES <= max(wv))
         lines_out = LINES[~index]
@@ -656,7 +667,7 @@ def run() -> None:
                     if rec['skipped']:
                         print(f'[{k:>3}/{len(tasks)}] {rec["line"]:9.3f} A  skipped: {rec["reason"]}')
                     elif rec['tana'] == 'ROTAT':
-                        print(f'[{k:>3}/{len(tasks)}] {rec["line"]:9.3f} A  {rec["elem"]:<5} {rec["tana"]:<6} vsini  = {rec["rotat"]:.0f} +- {np.floor(rec["err_rot"] + 0.5):.0f} km/s, A = {rec["abu_rot"]:.2f} +- {rec["err_abu_rot"]:.2f}')
+                        print(f'[{k:>3}/{len(tasks)}] {rec["line"]:9.3f} A  {rec["elem"]:<5} {rec["tana"]:<6} vsini  = {rec["rotat"]:.0f} +- {np.floor(rec["err_rot"] + 0.5):.0f} km/s ({rec["limit"]}, vmac = {rec["vmac"]:.1f}), A = {rec["abu_rot"]:.2f} +- {rec["err_abu_rot"]:.2f}')
                     else:
                         print(f'[{k:>3}/{len(tasks)}] {rec["line"]:9.3f} A  {rec["elem"]:<5} {rec["tana"]:<6} result = {rec["Abu"]:.2f}')
                 print('')

@@ -1,5 +1,50 @@
 # Changelog
 
+## 1.3.0
+
+### Added
+
+* `ROTAT`: macroturbulence (radial-tangential profile), keyword `ROT_VMAC` in `input.salvador`,
+  **mandatory when the linelist has `ROTAT` lines** (the run stops before any K2 call otherwise):
+  a value in km/s, or a relation evaluated for each star from its Teff and logg: `VF05` (Valenti &
+  Fischer 2005, dwarfs and subgiants), `D14` (Doyle et al. 2014, eq. 8, dwarfs), `B16` (Brewer et
+  al. 2016, eq. 2, dwarfs and subgiants; 4 km/s for logg < 3), `C08` (Carney et al. 2008, eq. 5, red
+  giants, also metal-poor; not RHB stars). A warning is printed outside the calibration of the
+  relation. Before, no macroturbulence: the v sin i also contained it (`ROT_VMAC = 0` gives the same).
+* `ROTAT`: optional keyword `ROT_VMAC_ERR` (km/s; default: the scatter of the relation, 0.8 km/s
+  for `C08` and 0.73 km/s for `D14`, otherwise 0, with a printed note). The fit is repeated with
+  vmac -/+ its error, and the resulting error of v sin i is in the new column `eROTv` of
+  `<spectrum>_rot.fit`; it is added in quadrature to the Monte Carlo error to decide the upper
+  limits. At R <= 40000 v sin i and vmac cannot be separated: below ~10-15 km/s the v sin i depends
+  on the vmac assumed (simulations of a metal-poor giant with the Mg b lines: with vmac too small by
+  5 km/s, a star without rotation gives v sin i = 6-7 km/s).
+* `ROTAT`: the macroturbulence used for each star is printed at the start of its analysis.
+* `ROTAT`: keyword `ROT_LD` for the linear limb-darkening coefficient (default 0.6, as before).
+* `ROTAT`: upper and lower limits. A v sin i smaller than its error, or than `ROT_UL_FWHM` (default
+  0.5) times the instrumental FWHM, is an upper limit; a v sin i at `ROT_MAX` is a lower limit. New
+  columns in `<spectrum>_rot.fit`: `eROTv` (above), `VMAC` (the macroturbulence used) and `LIM`
+  (`D`, `UL`, `LL`).
+* `ROTAT`: a warning when the fitted v sin i is larger than the half-width of the fit region, and a
+  note when the best fit is at v sin i = 0 (resolution or macroturbulence possibly too large).
+
+### Changed
+
+* **Action needed**: an `input.salvador` used with `ROTAT` lines must now contain `ROT_VMAC`
+  (`ROT_VMAC = 0` reproduces the treatment of the previous versions, without macroturbulence).
+* `ROTAT`: the broadening (instrumental, macroturbulence, rotation) is computed on a fine grid uniform
+  in velocity (0.25 km/s), with the kernels integrated over the pixels, for every v sin i of the grid
+  (`ROT_STEP`, now 1 km/s by default): no interpolation in v sin i. The model is compared with the
+  observed pixels. Before, the rotation was applied on the observed pixels (kernel sampled at a few
+  points for small v sin i) every 10 km/s and interpolated: in simulations at R = 40000 a v sin i of
+  4-6 km/s was underestimated by about 2 km/s. The best-fit spectrum of the plot is computed from the
+  same models (one K2 call less per line).
+
+### Fixed
+
+* The tests could not be collected with pytest 9.2 (it reads private attributes of the objects
+  of `conftest.py`, and the settings tried to read `input.salvador`): the settings are now read
+  only for public names.
+
 ## 1.2.0
 
 ### Changed

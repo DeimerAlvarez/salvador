@@ -444,9 +444,12 @@ def measure_line(wvl, flux, sss, fit1, fit2, elem, param1, name_star, abu, wv_le
     def rotation_result(answer):
         """Result of a ROTAT line (last fit; 99.99 if rejected), as read by salvador.py."""
         if answer == 'r':
-            return {"rot_fin": 99.99, "answer": answer, "abu_err_mc": 99.99, "abu_rot": 99.99, "err_abu_rot": 99.99}
-        return {"rot_fin": rot_data['best_rot_fine'], "answer": answer, "abu_err_mc": rot_data['err_rot'],
-                "abu_rot": rot_data['best_abu_fine'], "err_abu_rot": rot_data['err_abu']}
+            return {"rot_fin": 99.99, "answer": answer, "abu_err_mc": 99.99, "abu_rot": 99.99, "err_abu_rot": 99.99,
+                    "vmac": rot_data['vmac'], "err_rot_vmac": 99.99, "limit": '-'}
+        # rot_fin: the value to report (for an upper limit: v sin i + error)
+        return {"rot_fin": rot_data['rot_value'], "answer": answer, "abu_err_mc": rot_data['err_rot'],
+                "abu_rot": rot_data['best_abu_fine'], "err_abu_rot": rot_data['err_abu'],
+                "vmac": rot_data['vmac'], "err_rot_vmac": rot_data['err_rot_vmac'], "limit": rot_data['limit']}
 
     abu_fin = ew = snr = chi = param_mc = plot_data = rot_data = None
     if tana.startswith(ABU_KEYS):

@@ -1,0 +1,478 @@
+diff --git a/src/salvador/cli.py b/src/salvador/cli.py
+index 98f1e71..d5c6b44 100755
+--- a/src/salvador/cli.py
++++ b/src/salvador/cli.py
+@@ -214,7 +214,7 @@ def _analyse_line(task):
+     elif ans in ['y', 'r'] and tana == 'ROTAT':
+         rec.update(rotat=results['rot_fin'], err_rot=results['abu_err_mc'],
+                    abu_rot=results['abu_rot'], err_abu_rot=results['err_abu_rot'],
+-                   vmac=results['vmac'], limit=results['limit'])
++                   vmac=results['vmac'], err_rot_vmac=results['err_rot_vmac'], limit=results['limit'])
+         return rec      # no parameter errors for ROTAT (before, this case stopped with an error)
+ 
+     elif ans == 'e':
+@@ -308,17 +308,19 @@ def write_line_result(rec, abu_file, abu_file_isor, flags, kept):
+         if not os.path.exists(abu_file_rot):
+             with open(abu_file_rot, 'w') as f:
+                 f.write('#   LIM = D (measurement), UL (upper limit), LL (lower limit: ROT = ROT_MAX)\n')
+-                f.write('#   VMAC = macroturbulence used in the fit [km/s]\n')
+-                f.write('#SPECTRUM                           LINE   ELEM    ROT   eROT    ABU   eABU   VMAC  LIM\n')
++                f.write('#   VMAC = macroturbulence used in the fit [km/s]; eROTv = error of ROT due to the error of VMAC\n')
++                f.write('#   (eROT: Monte Carlo error; for an upper limit ROT includes both)\n')
++                f.write('#SPECTRUM                           LINE   ELEM    ROT   eROT  eROTv    ABU   eABU   VMAC  LIM\n')
+         # rejected line (r): 99.99, as in the abundance files (with 0 decimals it would read 100)
+         rot_txt = '99.99' if rec['rotat'] == 99.99 else f"{rec['rotat']:>5.0f}"
+         # error of the rotation as an integer (km/s), rounded half up
+         err_txt = '99.99' if rec['err_rot'] == 99.99 else f"{int(np.floor(rec['err_rot'] + 0.5)):>5d}"
+         # absolute abundance of the rotation fit and its Monte Carlo error (0.00 if the abundance is fixed)
++        err_vmac_txt = '99.99' if rec['err_rot_vmac'] == 99.99 else f"{rec['err_rot_vmac']:>5.1f}"
+         abu_txt = f"{rec['abu_rot']:>5.2f}"
+         err_abu_txt = f"{rec['err_abu_rot']:>5.2f}"
+         with open(abu_file_rot, 'a') as f:
+-            f.write(f"{name_star:<30}  {line:>8.3f}  {nelem:>5.2f}  {rot_txt:>5}  {err_txt:>5}  {abu_txt:>5}  {err_abu_txt:>5}  "
++            f.write(f"{name_star:<30}  {line:>8.3f}  {nelem:>5.2f}  {rot_txt:>5}  {err_txt:>5}  {err_vmac_txt:>5}  {abu_txt:>5}  {err_abu_txt:>5}  "
+                     f"{rec['vmac']:>5.1f}  {rec['limit']:>3}\n")
+ 
+     elif ans == 'e':
+diff --git a/src/salvador/config.py b/src/salvador/config.py
+index 880c24a..035b13a 100644
+--- a/src/salvador/config.py
++++ b/src/salvador/config.py
+@@ -81,7 +81,8 @@ KEYWORDS = {
+     'ROT_MAX':      ('rot_max',        float, 60.0),    # ROTAT: maximum rotation [km/s]
+     'ROT_NMC':      ('rot_nmc',        int,   100),     # ROTAT: Monte Carlo iterations
+     'ROT_STEP':     ('rot_step',       float, 1.0),     # ROTAT: step of the v sin i grid [km/s] (1.3.0: 1, was 10 for the interpolation nodes)
+-    'ROT_VMAC':     ('rot_vmac',       lambda v: _vmac_setting(v), 0.0),   # ROTAT: macroturbulence [km/s], or VF05
++    'ROT_VMAC':     ('rot_vmac',       lambda v: _vmac_setting(v), 0.0),   # ROTAT: macroturbulence [km/s], or VF05, D14, B16, C08
++    'ROT_VMAC_ERR': ('rot_vmac_err',   lambda v: _nonnegative(v), None),   # ROTAT: error of vmac [km/s] (default: scatter of the relation)
+     'ROT_LD':       ('rot_ld',         float, 0.6),     # ROTAT: linear limb-darkening coefficient
+     'ROT_UL_FWHM':  ('rot_ul_fwhm',    float, 0.5),     # ROTAT: v sin i below this fraction of the instrumental FWHM is an upper limit
+ }
+@@ -114,6 +115,7 @@ class Config:
+     rot_nmc: int = 100
+     rot_step: float = 1.0
+     rot_vmac: float | str = 0.0
++    rot_vmac_err: float | None = None
+     rot_ld: float = 0.6
+     rot_ul_fwhm: float = 0.5
+ 
+@@ -128,16 +130,25 @@ class Config:
+         return (self.limit_abu * 5) - 4
+ 
+ 
+-def _vmac_setting(value: str) -> float | str:
+-    """Value of ROT_VMAC: a macroturbulence >= 0 in km/s, or VF05 (Valenti & Fischer 2005)."""
+-    if value.strip().upper() == 'VF05':
+-        return 'VF05'
++VMAC_NAMES = ('VF05', 'D14', 'B16', 'C08')     # relations of rotation.VMAC_RELATIONS
++
++
++def _nonnegative(value: str) -> float:
++    """A number >= 0 (ValueError otherwise)."""
+     number = float(value)
+     if number < 0:
+         raise ValueError(value)
+     return number
+ 
+ 
++def _vmac_setting(value: str) -> float | str:
++    """Value of ROT_VMAC: a macroturbulence >= 0 in km/s, or the name of a relation: VF05 (Valenti &
++    Fischer 2005), D14 (Doyle et al. 2014), B16 (Brewer et al. 2016), C08 (Carney et al. 2008)."""
++    if value.strip().upper() in VMAC_NAMES:
++        return value.strip().upper()
++    return _nonnegative(value)
++
++
+ def load_config(path='input.salvador'):
+     """Read, convert and check the keywords of input.salvador. Stops with a clear message if a
+     mandatory keyword is missing or a value is not valid; warns about unknown keywords."""
+@@ -163,7 +174,7 @@ def load_config(path='input.salvador'):
+     values = {}
+     for key, (field, convert, default) in KEYWORDS.items():
+         if key not in raw:
+-            if default is None and key != 'PATH_SYN':
++            if default is None and key not in ('PATH_SYN', 'ROT_VMAC_ERR'):     # optional, default None
+                 sys.exit(f"Error: mandatory keyword '{key}' not found in {path}!")
+             values[field] = default
+             continue
+diff --git a/src/salvador/line_analysis.py b/src/salvador/line_analysis.py
+index b0a7ac4..9bcf943 100644
+--- a/src/salvador/line_analysis.py
++++ b/src/salvador/line_analysis.py
+@@ -445,11 +445,11 @@ def measure_line(wvl, flux, sss, fit1, fit2, elem, param1, name_star, abu, wv_le
+         """Result of a ROTAT line (last fit; 99.99 if rejected), as read by salvador.py."""
+         if answer == 'r':
+             return {"rot_fin": 99.99, "answer": answer, "abu_err_mc": 99.99, "abu_rot": 99.99, "err_abu_rot": 99.99,
+-                    "vmac": rot_data['vmac'], "limit": '-'}
++                    "vmac": rot_data['vmac'], "err_rot_vmac": 99.99, "limit": '-'}
+         # rot_fin: the value to report (for an upper limit: v sin i + error)
+         return {"rot_fin": rot_data['rot_value'], "answer": answer, "abu_err_mc": rot_data['err_rot'],
+                 "abu_rot": rot_data['best_abu_fine'], "err_abu_rot": rot_data['err_abu'],
+-                "vmac": rot_data['vmac'], "limit": rot_data['limit']}
++                "vmac": rot_data['vmac'], "err_rot_vmac": rot_data['err_rot_vmac'], "limit": rot_data['limit']}
+ 
+     abu_fin = ew = snr = chi = param_mc = plot_data = rot_data = None
+     if tana.startswith(ABU_KEYS):
+diff --git a/src/salvador/plotting.py b/src/salvador/plotting.py
+index 64d53f6..bea9a26 100644
+--- a/src/salvador/plotting.py
++++ b/src/salvador/plotting.py
+@@ -314,7 +314,8 @@ class PlotManager:
+         elif data.get('limit') == 'LL':
+             rot_txt = f'> {data["rot_value"]:.0f} km/s'
+         if data.get('vmac') is not None:
+-            rot_txt += f'\n$v_{{mac}}$ = {data["vmac"]:.1f} km/s'
++            vmac_err = data.get('vmac_err') or 0.0
++            rot_txt += f'\n$v_{{mac}}$ = {data["vmac"]:.1f}' + (f' $\\pm$ {vmac_err:.1f}' if vmac_err else '') + ' km/s'
+ 
+         # Clear the axis before drawing again
+         self.ax2.clear()
+diff --git a/src/salvador/rotation.py b/src/salvador/rotation.py
+index ecac61a..404fef6 100644
+--- a/src/salvador/rotation.py
++++ b/src/salvador/rotation.py
+@@ -9,6 +9,9 @@ keyword ROT_VMAC) and rotation (keywords ROT_LD for the limb darkening). Since 1
+ computed on a fine grid uniform in velocity, for every value of v sin i of the grid (no
+ interpolation in v sin i), and the model is compared with the observed pixels.
+ """
++from dataclasses import dataclass
++from typing import Callable
++
+ import numpy as np
+ from scipy.signal import fftconvolve
+ from scipy.special import erfc
+@@ -23,11 +26,6 @@ FINE_DV = 0.25          # km/s: step of the velocity grid on which the broadenin
+ _OVERSAMPLE = 21        # sub-samples per pixel to integrate the kernels over the pixels
+ _FWHM_GAUSS = 2.0 * np.sqrt(2.0 * np.log(2.0))
+ 
+-# Valenti & Fischer (2005), eq. (1): vmac = 3.98 + (Teff - 5770 K) / 650 K km/s. The equation is
+-# printed with a minus sign; the plus sign is the one of their Fig. 3 (vmac increases with Teff,
+-# 2.8 km/s at 5000 K) and of their text ("hotter stars having higher photospheric velocities").
+-VF05_RANGE_TEFF = (4700.0, 6600.0)      # 0.4 < B-V < 1.0 with their eq. (2)
+-VF05_MIN_LOGG = 3.5                     # dwarfs and subgiants
+ 
+ 
+ # ------------------------------------------------------------------------------- kernels
+@@ -97,24 +95,88 @@ def velocity_grid(wave: np.ndarray, flux: np.ndarray, dv: float = FINE_DV) -> tu
+ 
+ 
+ # ------------------------------------------------------------------------------- macroturbulence
+-def vmac_valenti_fischer(teff: float) -> float:
+-    """Macroturbulence of Valenti & Fischer (2005), eq. (1) with the sign of their Fig. 3:
+-    3.98 + (Teff - 5770) / 650 km/s (not below 0). Calibrated on dwarfs and subgiants with
+-    4700 < Teff < 6600 K."""
++# NEW (1.3.0): relations for the radial-tangential macroturbulence, selected with ROT_VMAC. At
++# R <= 40000 v sin i and vmac cannot be separated (the fit measures the total broadening), so for
++# v sin i below ~10-15 km/s the result depends on the vmac assumed: use the relation calibrated on
++# stars like the target. The calibration ranges are only used to print a warning.
++def vmac_valenti_fischer(teff: float, logg: float = 4.44) -> float:
++    """Valenti & Fischer (2005), eq. (1) with the sign of their Fig. 3 and text (vmac increases with
++    Teff, 2.8 km/s at 5000 K; the equation is printed with a minus sign): 3.98 + (Teff - 5770)/650."""
+     return max(3.98 + (teff - 5770.0) / 650.0, 0.0)
+ 
+ 
+-def star_macroturbulence(teff: float, logg: float, setting: str | float | None = None) -> float:
+-    """Macroturbulence [km/s] for a star from the keyword ROT_VMAC: a value in km/s, or VF05
+-    (Valenti & Fischer 2005, from Teff; a warning is printed outside its calibration)."""
+-    setting = cfg.rot_vmac if setting is None else setting
+-    if isinstance(setting, str) and setting.upper() == 'VF05':
+-        if not (VF05_RANGE_TEFF[0] <= teff <= VF05_RANGE_TEFF[1]) or logg < VF05_MIN_LOGG:
+-            print(f'WARNING: ROT_VMAC = VF05 is calibrated on dwarfs and subgiants with Teff = '
+-                  f'{VF05_RANGE_TEFF[0]:.0f}-{VF05_RANGE_TEFF[1]:.0f} K (Teff = {teff:.0f} K, logg = {logg:.2f} here): '
+-                  f'give the macroturbulence of this star with ROT_VMAC (km/s)')
+-        return vmac_valenti_fischer(teff)
+-    return float(setting)
++def vmac_doyle(teff: float, logg: float) -> float:
++    """Doyle et al. (2014), eq. (8): 3.21 + 2.33e-3 dT + 2.00e-6 dT^2 - 2.00 (logg - 4.44),
++    dT = Teff - 5777 K."""
++    dt = teff - 5777.0
++    return max(3.21 + 2.33e-3 * dt + 2.00e-6 * dt ** 2 - 2.00 * (logg - 4.44), 0.0)
++
++
++def vmac_brewer(teff: float, logg: float) -> float:
++    """Brewer et al. (2016), eq. (2): dwarfs (logg >= 4) 2.202 exp(0.0019 dT) + 1.30, subgiants
++    (3 <= logg < 4) 1.166 exp(0.0028 dT) + 3.30, giants (logg < 3) 4.0 km/s; dT = Teff - 5777 K."""
++    dt = teff - 5777.0
++    if logg >= 4.0:
++        return 2.202 * np.exp(0.0019 * dt) + 1.30
++    if logg >= 3.0:
++        return 1.166 * np.exp(0.0028 * dt) + 3.30
++    return 4.0
++
++
++def vmac_carney(teff: float, logg: float) -> float:
++    """Carney et al. (2008), eq. (5), for red giants: -0.80 logg + 7.33 km/s."""
++    return max(-0.80 * logg + 7.33, 0.0)
++
++
++@dataclass(frozen=True)
++class VmacRelation:
++    """A macroturbulence relation vmac(Teff, logg) with its calibration range and scatter."""
++    function: Callable[[float, float], float]
++    teff_range: tuple[float, float]
++    logg_range: tuple[float, float]
++    scatter: float | None           # km/s, as quoted in the paper (None: not given)
++    reference: str
++
++
++VMAC_RELATIONS = {
++    'VF05': VmacRelation(vmac_valenti_fischer, (4700.0, 6600.0), (3.5, 5.0), None,
++                         'Valenti & Fischer 2005, dwarfs and subgiants'),
++    'D14': VmacRelation(vmac_doyle, (5200.0, 6400.0), (4.0, 4.6), 0.73, 'Doyle et al. 2014, dwarfs'),
++    'B16': VmacRelation(vmac_brewer, (4700.0, 6800.0), (3.0, 5.0), None,
++                        'Brewer et al. 2016, dwarfs and subgiants (4 km/s for logg < 3)'),
++    'C08': VmacRelation(vmac_carney, (4000.0, 5000.0), (1.2, 3.4), 0.8,
++                        'Carney et al. 2008, red giants (calibrated on disk giants; followed by the '
++                        'metal-poor RGB stars of their sample, logg 0.2-1.1; not valid for the RHB)'),
++}
++
++
++def star_macroturbulence(teff: float, logg: float, setting: str | float | None = None,
++                         error: float | None = None) -> tuple[float, float]:
++    """Macroturbulence [km/s] of a star and its uncertainty.
++
++    Args:
++        teff, logg: Parameters of the star.
++        setting: A value in km/s or the name of a relation of VMAC_RELATIONS; None: the keywords
++            ROT_VMAC and ROT_VMAC_ERR of input.salvador.
++        error: Uncertainty of vmac [km/s]; None: the scatter of the relation (0 when unknown).
++
++    Returns:
++        (vmac, error) in km/s. A warning is printed outside the calibration of the relation.
++    """
++    if setting is None:
++        setting, error = cfg.rot_vmac, cfg.rot_vmac_err
++    if isinstance(setting, str):
++        relation = VMAC_RELATIONS[setting.upper()]
++        (t1, t2), (g1, g2) = relation.teff_range, relation.logg_range
++        if not (t1 <= teff <= t2 and g1 <= logg <= g2):
++            print(f'WARNING: ROT_VMAC = {setting.upper()} ({relation.reference}) is calibrated on Teff = {t1:.0f}-{t2:.0f} K, '
++                  f'logg = {g1:.1f}-{g2:.1f} (Teff = {teff:.0f} K, logg = {logg:.2f} here): check the macroturbulence, '
++                  f'it sets v sin i below ~10-15 km/s')
++        vmac = relation.function(teff, logg)
++        if error is None:
++            error = relation.scatter or 0.0
++        return float(vmac), float(error)
++    return float(setting), float(error or 0.0)
+ 
+ 
+ # ------------------------------------------------------------------------------- analysis
+@@ -131,10 +193,14 @@ def analysis_rotat(nelem, alpha, met, delta, elem, wvl, flux, line, window, para
+     limit; at ROT_MAX, a lower limit.
+ 
+     Optional keyword arguments (from the linelist): abu_init, abu_span, rot_min, rot_max; and
+-    rot_step, n_mc, vmac, ld, ul_fwhm to override the settings of input.salvador.
++    rot_step, n_mc, vmac, vmac_err, ld, ul_fwhm to override the settings of input.salvador.
++
++    NEW: if the macroturbulence has an uncertainty (ROT_VMAC_ERR, or the scatter of the relation),
++    the fit is repeated with vmac -/+ its error; err_rot_vmac is half the difference of the two
++    v sin i (systematic error, added in quadrature to the Monte Carlo error for the limits).
+ 
+     Returns:
+-        Dictionary with the result (best_rot_fine, err_rot, best_abu_fine, err_abu, vmac, ld,
++        Dictionary with the result (best_rot_fine, err_rot, err_rot_vmac, best_abu_fine, err_abu, vmac, ld,
+         limit: 'D' measurement, 'UL' upper limit, 'LL' lower limit; rot_value: the value to report)
+         and the data for the plot.
+     """
+@@ -148,10 +214,9 @@ def analysis_rotat(nelem, alpha, met, delta, elem, wvl, flux, line, window, para
+     rot_step = float(kwargs.get('rot_step', cfg.rot_step))
+     n_mc = int(kwargs.get('n_mc', cfg.rot_nmc))
+     eps = float(kwargs.get('ld', cfg.rot_ld))
+-    vmac = kwargs.get('vmac')
+-    if vmac is None:
+-        vmac = star_macroturbulence(float(param1['teff']), float(param1['logg']))
+-    vmac = float(vmac)
++    vmac, vmac_err = star_macroturbulence(float(param1['teff']), float(param1['logg']))
++    vmac = float(kwargs.get('vmac', vmac))
++    vmac_err = float(kwargs.get('vmac_err', vmac_err))
+ 
+     abundances = np.array([abu0]) if abu_span == 0 else np.round(np.arange(abu0 - abu_span, abu0 + abu_span + 0.01, 0.1), 2)
+     rotations = np.round(np.arange(rot_min, rot_max + 0.5 * rot_step, rot_step), 3)
+@@ -165,16 +230,22 @@ def analysis_rotat(nelem, alpha, met, delta, elem, wvl, flux, line, window, para
+ 
+     # synthetic spectra (one K2 call per abundance) on a fine velocity grid, broadened by the
+     # instrument and by the macroturbulence (independent of v sin i: done once)
+-    base = []
++    raw = []
+     for abu_val in abundances:
+         wl_k2, fl_k2 = autok(param1, np.round(abu_val - abu_model, 2), window)
+         w_v, f_v = velocity_grid(getattr(wl_k2, 'value', wl_k2), getattr(fl_k2, 'value', fl_k2))
+-        base.append(f_v)
+-    base = np.array(base)
++        raw.append(f_v)
++    raw = np.array(raw)
+     fwhm_instr = C_KMS / float(resol)
+-    base = convolve_rows(base, pixel_kernel(FINE_DV, 4.0 * fwhm_instr, lambda v: gaussian_kernel(v, fwhm_instr)))
+-    if vmac > 0:
+-        base = convolve_rows(base, pixel_kernel(FINE_DV, 6.0 * vmac, lambda v: macroturbulence_kernel(v, vmac)))
++    raw = convolve_rows(raw, pixel_kernel(FINE_DV, 4.0 * fwhm_instr, lambda v: gaussian_kernel(v, fwhm_instr)))
++
++    def macro(spectra: np.ndarray, zeta: float) -> np.ndarray:
++        """Radial-tangential macroturbulence (nothing for zeta = 0)."""
++        if zeta <= 0:
++            return spectra
++        return convolve_rows(spectra, pixel_kernel(FINE_DV, 6.0 * zeta, lambda v: macroturbulence_kernel(v, zeta)))
++
++    base = macro(raw, vmac)
+ 
+     def rotate(spectra: np.ndarray, vsini: float) -> np.ndarray:
+         """Rotational broadening (exact for each v sin i: no interpolation between values)."""
+@@ -182,13 +253,16 @@ def analysis_rotat(nelem, alpha, met, delta, elem, wvl, flux, line, window, para
+             return spectra
+         return convolve_rows(spectra, pixel_kernel(FINE_DV, vsini, lambda v: rotation_kernel(v, vsini, eps)))
+ 
+-    # models at the observed pixels of the fit region: (abundance, v sin i, pixel)
+-    models = np.array([[np.interp(w_fit, w_v, row) for row in rotate(base, vsini)] for vsini in rotations]).transpose(1, 0, 2)
++    def models_at_pixels(spectra: np.ndarray) -> np.ndarray:
++        """Models at the observed pixels of the fit region: (abundance, v sin i, pixel)."""
++        return np.array([[np.interp(w_fit, w_v, row) for row in rotate(spectra, vsini)] for vsini in rotations]).transpose(1, 0, 2)
+ 
+     def chi2(observed: np.ndarray, model: np.ndarray) -> np.ndarray:
+         """chi2 as for the abundances: sum of (observed - model)^2 / model over the pixels."""
+         return np.sum((observed - model) ** 2 / np.clip(model, 1e-9, None), axis=-1)
+ 
++    models = models_at_pixels(base)
++
+     # fine grid of abundances around the best coarse abundance (+-0.20 dex, 0.01 dex)
+     best_coarse = np.unravel_index(np.nanargmin(chi2(obs_fit, models)), (len(abundances), len(rotations)))
+     if len(abundances) == 1:
+@@ -214,6 +288,17 @@ def analysis_rotat(nelem, alpha, met, delta, elem, wvl, flux, line, window, para
+         mc_abu[k], mc_rot[k] = finer_abundances[i_k], rotations[j_k]
+     err_abu, err_rot = (float(np.std(mc_abu)), float(np.std(mc_rot))) if n_mc > 1 else (0.0, 0.0)
+ 
++    # NEW: systematic error due to the macroturbulence: v sin i of the best fits with vmac -/+ error
++    # (abundance free on the coarse grid). v sin i and vmac are degenerate at these resolutions.
++    err_rot_vmac = 0.0
++    if vmac_err > 0:
++        rot_vmac = []
++        for zeta in (max(vmac - vmac_err, 0.0), vmac + vmac_err):
++            chi2_z = chi2(obs_fit, models_at_pixels(macro(raw, zeta)))
++            rot_vmac.append(float(rotations[np.unravel_index(np.nanargmin(chi2_z), chi2_z.shape)[1]]))
++        err_rot_vmac = abs(rot_vmac[0] - rot_vmac[1]) / 2.0
++    err_total = float(np.hypot(err_rot, err_rot_vmac))
++
+     # NEW: limits. A lower limit when the minimum is at the largest v sin i of the grid. An upper limit
+     # when v sin i is smaller than its error (as in Rain et al. 2026: v sin i + error) or than
+     # ROT_UL_FWHM x the instrumental FWHM: in the simulations (R = 20000-40000, S/N = 50-100) smaller
+@@ -222,8 +307,8 @@ def analysis_rotat(nelem, alpha, met, delta, elem, wvl, flux, line, window, para
+     resolution_limit = float(kwargs.get('ul_fwhm', cfg.rot_ul_fwhm)) * fwhm_instr
+     if best_rot_fine >= rotations[-1] and rotations[-1] > rotations[0]:
+         limit, rot_value = 'LL', best_rot_fine
+-    elif best_rot_fine < err_rot or best_rot_fine < resolution_limit or (best_rot_fine <= rotations[0] and rotations[0] == 0):
+-        limit, rot_value = 'UL', max(best_rot_fine + err_rot, resolution_limit)
++    elif best_rot_fine < err_total or best_rot_fine < resolution_limit or (best_rot_fine <= rotations[0] and rotations[0] == 0):
++        limit, rot_value = 'UL', max(best_rot_fine + err_total, resolution_limit)
+     else:
+         limit, rot_value = 'D', best_rot_fine
+     # NEW: the fit region must contain the whole broadened line (simulations: with v sin i larger than
+@@ -239,8 +324,8 @@ def analysis_rotat(nelem, alpha, met, delta, elem, wvl, flux, line, window, para
+               f'(R = {float(resol):.0f}) and the macroturbulence (vmac = {vmac:.1f} km/s)')
+     limit_txt = {'D': '', 'UL': ' (upper limit: ', 'LL': ' (lower limit: '}[limit]
+     limit_txt += '' if limit == 'D' else f'{np.floor(rot_value + 0.5):.0f} km/s)'
+-    print(f"Final Best Fit -> Rot: {best_rot_fine:.0f} ± {np.floor(err_rot + 0.5):.0f} km/s{limit_txt} "
+-          f"(vmac = {vmac:.1f} km/s, LD = {eps:.2f}) --- Abu: {best_abu_fine:.2f} ± {err_abu:.2f}")
++    print(f"Final Best Fit -> Rot: {best_rot_fine:.0f} ± {np.floor(err_rot + 0.5):.0f} (MC) ± {err_rot_vmac:.1f} (vmac) km/s"
++          f"{limit_txt} (vmac = {vmac:.1f} ± {vmac_err:.1f} km/s, LD = {eps:.2f}) --- Abu: {best_abu_fine:.2f} ± {err_abu:.2f}")
+ 
+     # spectra for the plot (whole window): best fit and +-10 km/s, from the same models as the fit
+     best_base = interp_in_abundance(np.array([best_abu_fine]), abundances, base) if len(abundances) > 1 else base
+@@ -252,5 +337,6 @@ def analysis_rotat(nelem, alpha, met, delta, elem, wvl, flux, line, window, para
+         "xspec": w_obs, "yspec": f_obs, "line": line, "finer_rotations": rotations,
+         "min_chi2_fine": chi2_fine, "finer_abundances": finer_abundances, "elem": elem, "window": window,
+         "best_rot_fine": best_rot_fine, "best_abu_fine": best_abu_fine, "fit1": fit1, "fit2": fit2,
+-        "err_abu": err_abu, "err_rot": err_rot, "vmac": vmac, "ld": eps, "limit": limit, "rot_value": rot_value,
++        "err_abu": err_abu, "err_rot": err_rot, "err_rot_vmac": err_rot_vmac, "vmac": vmac, "vmac_err": vmac_err,
++        "ld": eps, "limit": limit, "rot_value": rot_value,
+     }
+diff --git a/tests/data/keywords/ROTAT/expected/star37934_rot.fit b/tests/data/keywords/ROTAT/expected/star37934_rot.fit
+index 08d27c8..d1b7a27 100644
+--- a/tests/data/keywords/ROTAT/expected/star37934_rot.fit
++++ b/tests/data/keywords/ROTAT/expected/star37934_rot.fit
+@@ -1,7 +1,8 @@
+ #   LIM = D (measurement), UL (upper limit), LL (lower limit: ROT = ROT_MAX)
+-#   VMAC = macroturbulence used in the fit [km/s]
+-#SPECTRUM                           LINE   ELEM    ROT   eROT    ABU   eABU   VMAC  LIM
+-star37934                       5857.451  20.00      4      2   5.45   0.10    0.0   UL
+-star37934                       5948.541  14.00      4      2   6.84   0.07    0.0   UL
+-star37934                       6137.691  26.00      4      1   6.21   0.06    0.0   UL
+-star37934                       6141.713  56.01      4      1   1.17   0.04    0.0   UL
++#   VMAC = macroturbulence used in the fit [km/s]; eROTv = error of ROT due to the error of VMAC
++#   (eROT: Monte Carlo error; for an upper limit ROT includes both)
++#SPECTRUM                           LINE   ELEM    ROT   eROT  eROTv    ABU   eABU   VMAC  LIM
++star37934                       5857.451  20.00      4      2    0.0   5.45   0.10    0.0   UL
++star37934                       5948.541  14.00      4      2    0.0   6.84   0.07    0.0   UL
++star37934                       6137.691  26.00      4      1    0.0   6.21   0.06    0.0   UL
++star37934                       6141.713  56.01      4      1    0.0   1.17   0.04    0.0   UL
+diff --git a/tests/test_rotation.py b/tests/test_rotation.py
+index 5040d26..dd52716 100644
+--- a/tests/test_rotation.py
++++ b/tests/test_rotation.py
+@@ -55,12 +55,35 @@ def test_valenti_fischer():
+     assert rot.vmac_valenti_fischer(2000) == 0.0
+ 
+ 
++@pytest.mark.parametrize('name, teff, logg, expected', [
++    ('D14', 5777, 4.44, 3.21),              # Doyle et al. 2014 at the solar values
++    ('B16', 5777, 4.44, 2.202 + 1.30),      # Brewer et al. 2016, dwarfs
++    ('B16', 5777, 3.50, 1.166 + 3.30),      # subgiants
++    ('B16', 4500, 2.00, 4.0),               # giants: constant
++    ('C08', 4351, 0.96, 7.33 - 0.80 * 0.96),  # Carney et al. 2008, eq. 5
++])
++def test_vmac_relations(name, teff, logg, expected):
++    assert rot.VMAC_RELATIONS[name].function(teff, logg) == pytest.approx(expected, abs=1e-3)
++
++
+ def test_star_macroturbulence(capsys):
+-    assert rot.star_macroturbulence(5970, 4.1, 'VF05') == pytest.approx(4.29, abs=0.01)
++    assert rot.star_macroturbulence(5970, 4.1, 'VF05') == pytest.approx((4.29, 0.0), abs=0.01)
+     assert capsys.readouterr().out == ''
+     rot.star_macroturbulence(4300, 1.5, 'VF05')                  # a giant: outside the calibration
+-    assert 'calibrated on dwarfs' in capsys.readouterr().out
+-    assert rot.star_macroturbulence(4300, 1.5, 5.5) == 5.5
++    assert 'is calibrated on' in capsys.readouterr().out
++    assert rot.star_macroturbulence(4500, 2.0, 'C08') == pytest.approx((5.73, 0.8))   # error: scatter of the relation
++    assert capsys.readouterr().out == ''
++    assert rot.star_macroturbulence(4300, 1.5, 5.5) == (5.5, 0.0)
++
++
++def test_star_macroturbulence_error_from_keyword():
++    previous = cfg._config
++    cfg.use(Config(input_stars='x', type_norm=1, window=10, inter='n', sclip=3.0, rot_vmac_err=1.5))
++    try:
++        assert rot.star_macroturbulence(4500, 2.0) == (0.0, 1.5)          # ROT_VMAC default 0
++        assert rot.star_macroturbulence(4500, 2.0, 'C08', 1.5)[1] == 1.5
++    finally:
++        cfg.use(previous)
+ 
+ 
+ def test_rotat_keywords(tmp_path):
+@@ -68,9 +91,13 @@ def test_rotat_keywords(tmp_path):
+     (tmp_path / 'in1').write_text(base + 'ROT_VMAC = vf05\nROT_LD = 0.7\n')
+     config = load_config(tmp_path / 'in1')
+     assert config.rot_vmac == 'VF05' and config.rot_ld == 0.7 and config.rot_step == 1.0 and config.rot_ul_fwhm == 0.5
++    assert config.rot_vmac_err is None
++    (tmp_path / 'in4').write_text(base + 'ROT_VMAC = c08\nROT_VMAC_ERR = 1.2\n')
++    config = load_config(tmp_path / 'in4')
++    assert config.rot_vmac == 'C08' and config.rot_vmac_err == 1.2
+     (tmp_path / 'in2').write_text(base)
+     assert load_config(tmp_path / 'in2').rot_vmac == 0.0                # default: no macroturbulence
+-    for bad in ('ROT_VMAC = -1', 'ROT_VMAC = abc', 'ROT_LD = 1.5'):
++    for bad in ('ROT_VMAC = -1', 'ROT_VMAC = abc', 'ROT_LD = 1.5', 'ROT_VMAC_ERR = -0.5'):
+         (tmp_path / 'in3').write_text(base + bad + '\n')
+         with pytest.raises(SystemExit):
+             load_config(tmp_path / 'in3')
+@@ -150,3 +177,14 @@ def test_lower_limit_and_narrow_fit_region(rotat, capsys):
+     result = fit(*mock(40.0, 3.0), vmac=3.0, rot_max=20)
+     assert result['limit'] == 'LL' and result['rot_value'] == 20
+     assert 'half-width of the fit region' in capsys.readouterr().out
++
++
++def test_error_due_to_macroturbulence(rotat):
++    # v sin i and vmac are degenerate: an error on vmac gives an error on v sin i, larger for slow rotators
++    mock, fit = rotat
++    w, f = mock(6.0, 3.0, snr=300)
++    assert fit(w, f, vmac=3.0)['err_rot_vmac'] == 0.0
++    slow = fit(w, f, vmac=3.0, vmac_err=1.0)
++    fast = fit(*mock(25.0, 3.0, snr=300), vmac=3.0, vmac_err=1.0)
++    assert slow['err_rot_vmac'] >= 0.5 and slow['err_rot_vmac'] > fast['err_rot_vmac']
++    assert abs(slow['best_rot_fine'] - 6.0) <= 1.5          # the best fit does not change

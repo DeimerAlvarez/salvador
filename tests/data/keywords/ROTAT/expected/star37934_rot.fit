@@ -1,5 +1,8 @@
-#SPECTRUM                           LINE   ELEM    ROT   eROT    ABU   eABU
-star37934                       5857.451  20.00      1      1   5.47   0.10
-star37934                       5948.541  14.00      0      1   6.84   0.07
-star37934                       6137.691  26.00      0      1   6.21   0.06
-star37934                       6141.713  56.01      0      0   1.17   0.04
+#   LIM = D (measurement), UL (upper limit), LL (lower limit: ROT = ROT_MAX)
+#   VMAC = macroturbulence used in the fit [km/s]; eROTv = error of ROT due to the error of VMAC
+#   (eROT: Monte Carlo error; for an upper limit ROT includes both)
+#SPECTRUM                           LINE   ELEM    ROT   eROT  eROTv    ABU   eABU   VMAC  LIM
+star37934                       5857.451  20.00      4      2    0.0   5.45   0.10    0.0   UL
+star37934                       5948.541  14.00      4      2    0.0   6.84   0.07    0.0   UL
+star37934                       6137.691  26.00      4      1    0.0   6.21   0.06    0.0   UL
+star37934                       6141.713  56.01      4      1    0.0   1.17   0.04    0.0   UL

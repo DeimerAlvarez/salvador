@@ -80,7 +80,11 @@ KEYWORDS = {
     'ROT_MIN':      ('rot_min',        float, 0.0),     # ROTAT: minimum rotation [km/s]
     'ROT_MAX':      ('rot_max',        float, 60.0),    # ROTAT: maximum rotation [km/s]
     'ROT_NMC':      ('rot_nmc',        int,   100),     # ROTAT: Monte Carlo iterations
-    'ROT_STEP':     ('rot_step',       float, 10.0),    # ROTAT: step of the coarse rotation grid [km/s]
+    'ROT_STEP':     ('rot_step',       float, 1.0),     # ROTAT: step of the v sin i grid [km/s] (1.3.0: 1, was 10 for the interpolation nodes)
+    'ROT_VMAC':     ('rot_vmac',       lambda v: _vmac_setting(v), None),  # ROTAT: macroturbulence [km/s], or VF05, D14, B16, C08 (mandatory with ROTAT lines)
+    'ROT_VMAC_ERR': ('rot_vmac_err',   lambda v: _nonnegative(v), None),   # ROTAT: error of vmac [km/s] (default: scatter of the relation)
+    'ROT_LD':       ('rot_ld',         float, 0.6),     # ROTAT: linear limb-darkening coefficient
+    'ROT_UL_FWHM':  ('rot_ul_fwhm',    float, 0.5),     # ROTAT: v sin i below this fraction of the instrumental FWHM is an upper limit
 }
 
 
@@ -109,7 +113,11 @@ class Config:
     rot_min: float = 0.0
     rot_max: float = 60.0
     rot_nmc: int = 100
-    rot_step: float = 10.0
+    rot_step: float = 1.0
+    rot_vmac: float | str | None = None
+    rot_vmac_err: float | None = None
+    rot_ld: float = 0.6
+    rot_ul_fwhm: float = 0.5
 
     @property
     def grid(self):
@@ -120,6 +128,25 @@ class Config:
     def limit_iter(self):
         """Iterations of the automatic mode allowed by LIMIT_ABU (default +-3 dex = 11 iterations)."""
         return (self.limit_abu * 5) - 4
+
+
+VMAC_NAMES = ('VF05', 'D14', 'B16', 'C08')     # relations of rotation.VMAC_RELATIONS
+
+
+def _nonnegative(value: str) -> float:
+    """A number >= 0 (ValueError otherwise)."""
+    number = float(value)
+    if number < 0:
+        raise ValueError(value)
+    return number
+
+
+def _vmac_setting(value: str) -> float | str:
+    """Value of ROT_VMAC: a macroturbulence >= 0 in km/s, or the name of a relation: VF05 (Valenti &
+    Fischer 2005), D14 (Doyle et al. 2014), B16 (Brewer et al. 2016), C08 (Carney et al. 2008)."""
+    if value.strip().upper() in VMAC_NAMES:
+        return value.strip().upper()
+    return _nonnegative(value)
 
 
 def load_config(path='input.salvador'):
@@ -147,7 +174,7 @@ def load_config(path='input.salvador'):
     values = {}
     for key, (field, convert, default) in KEYWORDS.items():
         if key not in raw:
-            if default is None and key != 'PATH_SYN':
+            if default is None and key not in ('PATH_SYN', 'ROT_VMAC', 'ROT_VMAC_ERR'):    # optional, default None
                 sys.exit(f"Error: mandatory keyword '{key}' not found in {path}!")
             values[field] = default
             continue
@@ -171,6 +198,12 @@ def load_config(path='input.salvador'):
         sys.exit(f"Error: NORM must be 0, 1, 2 or 3 in {path} (found {cfg.type_norm})")
     if cfg.type_norm == 3:
         sys.exit('Error: NORM = 3 is still under development and cannot be used yet (use NORM = 0, 1 or 2)')
+    if not 0.0 <= cfg.rot_ld <= 1.0:
+        sys.exit(f"Error: ROT_LD must be between 0 and 1 in {path} (found {cfg.rot_ld})")
+    if cfg.rot_ul_fwhm < 0:
+        sys.exit(f"Error: ROT_UL_FWHM cannot be negative in {path} (found {cfg.rot_ul_fwhm})")
+    if cfg.rot_step <= 0:
+        sys.exit(f"Error: ROT_STEP must be positive in {path} (found {cfg.rot_step})")
     return cfg
 
 
@@ -200,7 +233,9 @@ class LazyConfig:
         return self._config is not None
 
     def __getattr__(self, name: str):
-        if name.startswith('__'):       # copy/pickle protocols: no file reading for them
+        # copy/pickle protocols and private names: no file reading for them (FIX: pytest >= 9.2
+        # looks for private attributes of the objects of conftest.py while collecting the tests)
+        if name.startswith('_'):
             raise AttributeError(name)
         if self._config is None:
             self.load()
