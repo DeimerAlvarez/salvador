@@ -1,6 +1,9 @@
 """Everything that talks to K2: running it (in-process), synthetic spectra (autok), equivalent widths
-(eqw_k2), trimmed linelists, the model-atmosphere check, abundance-variation (DELTA) files and the
-names of the synthetic spectra. The switches K2_IN_PROCESS, TRIM_LINELIST and K2_FAST_MODEL_CHECK are here."""
+and slopes of the curve of growth (eqw_k2), trimmed linelists, abundance-variation (DELTA) files and
+the names of the synthetic spectra. The switches K2_IN_PROCESS and TRIM_LINELIST are here.
+
+salvador 1.4.0 needs the version of K2 of November 2026 (or later), whose eqw writes the slope of
+the curve of growth in info_ew.txt (5 columns)."""
 import importlib
 import json
 import os
@@ -33,7 +36,8 @@ from .spectra_io import model_name_codes, read_two_columns
 ###    passed unchanged (no cut). Set TRIM_LINELIST = False to use linelist.xkur as before.
 K2_IN_PROCESS = True
 TRIM_LINELIST = True
-K2_FAST_MODEL_CHECK = True      # see _install_k2_model_check below
+# 1.4.0: the shortcut K2_FAST_MODEL_CHECK (a wrapper of K2's RunAtlas9.atlas9 that checked whether
+# the model atmosphere exists before the ODF interpolation) was removed: K2 now does it itself.
 K2_LINELIST = str(BASE_DIR / 'linelist.xkur')
 LINELIST_MARGIN_A = 50.0
 LINELIST_CUT_DIR = Path('linelist_cut')
@@ -59,11 +63,6 @@ def run_k2():
         except Exception as e:
             print(f'Warning: cannot import K2 ({e}). Using the external call k2.py')
             K2_IN_PROCESS = False
-        if K2_IN_PROCESS and K2_FAST_MODEL_CHECK:
-            try:
-                _install_k2_model_check()
-            except Exception as e:      # only the shortcut is lost, K2 still runs in-process
-                print(f'Warning: K2 model check not installed ({type(e).__name__}: {e})')
 
     if not K2_IN_PROCESS:
         return os.system('k2.py')
@@ -104,59 +103,20 @@ def run_k2():
             plt.ion()
 
 
-def _install_k2_model_check():
-    """SPEED: in K2's RunAtlas9.atlas9(), the ODFs and Rosseland tables are interpolated for a
-    [M/H] that is not a grid value (interpol_odf.exe, ~0.26 s per call) BEFORE checking whether the
-    model atmosphere already exists; when it exists the interpolation is thrown away. Since K2 runs
-    in this process, this wrapper does the existence check first, with K2's own naming method and
-    the same directory rule, and does what K2 does in that case (copy the model to
-    guess_model_4other.dat and return 1). In every other case K2's original method runs unchanged.
-    The skipped steps only prepare files for an ATLAS9 run (interpol.*, guess_model_4atlas9.dat)
-    and erase fort.* files, which synthe() erases anyway before SYNTHE. No K2 file is modified."""
-    import atlas9 as k2_atlas9
-    from path import path_model
-    original = k2_atlas9.RunAtlas9.atlas9
-    if getattr(original, '_salvador_model_check', False):
-        return
-
-    def atlas9(self, pset, ross_set, name):
-        """Wrapper of K2's RunAtlas9.atlas9: if the model atmosphere already exists, copy it as K2 does and
-        skip the ODF interpolation; otherwise run K2's original method (see _install_k2_model_check)."""
-        if len(pset) == 5 and self.checkmod == 1:
-            try:
-                path0, strname = path_model().path1(pset[3])[4:6]
-                name_mod = self.name_model(pset, strname, 1) if name == '*' else name
-                if self.moddir == '@#@':
-                    where = path0 + '/models-new/'
-                elif self.moddir == '.':
-                    where = './'
-                else:
-                    where = str(self.moddir) + '/'
-                outmod = where + name_mod + '.dat'
-                if os.path.exists(outmod):
-                    if self.verbose > 0:
-                        print('Model atmosphere already exists')
-                    shutil.copyfile(outmod, 'guess_model_4other.dat')   # FIX: safe with spaces in the paths
-                    return 1
-            except Exception:
-                pass                # anything unexpected: K2 decides, as before
-        return original(self, pset, ross_set, name)
-
-    atlas9._salvador_model_check = True
-    k2_atlas9.RunAtlas9.atlas9 = atlas9
-
-
 def _parse_k2_linelist(path):
     """Sections of a K2 linelist file, read as K2 does (first token of each line):
-    [(marker, [file, ...]), ...]."""
+    [(marker, [file, ...]), ...]. As in K2, the markers are recognised in upper or lower case and
+    the other lines starting with '#' are comments (FIX 1.4.0: before, they were taken as files)."""
     sections = []
     with open(path, 'r') as f:
         for row in f:
             tok = row.split()
             if not tok:
                 continue
-            if tok[0] in _K2_MARKERS:
-                sections.append((tok[0], []))
+            if tok[0].upper() in _K2_MARKERS:
+                sections.append((tok[0].upper(), []))
+            elif tok[0].startswith('#'):
+                continue
             elif sections:
                 sections[-1][1].append(tok[0])
     return sections
@@ -612,9 +572,41 @@ def autok(param1, delta, window):
 
     return xs, ys0
 
+class K2FormatError(RuntimeError):
+    """The EW file of K2 (info_ew.txt) has no slope of the curve of growth: K2 is older than the
+    version salvador needs. It stops the run (it is not handled as an error of one line)."""
+
+
+K2_FORMAT_MESSAGE = 'salvador needs EW file with the COG slope'
+
+
+def read_info_ew(path: str | Path = 'info_ew.txt') -> tuple[float, float, float, float]:
+    """EW [mA], EP [eV], log gf and slope of the curve of growth from the EW file of K2.
+
+    The file has one row: wavelength, EW, EP, log gf, slope (NEW in K2: 'nan' when K2 cannot
+    compute the slope, which is returned as 99.999).
+
+    Raises:
+        K2FormatError: the row has 4 values (K2 without the slope).
+        ValueError: the row cannot be read.
+    """
+    fields = Path(path).read_text().split()
+    if len(fields) == 4:
+        raise K2FormatError(K2_FORMAT_MESSAGE)
+    if len(fields) != 5:
+        raise ValueError(f'{len(fields)} values instead of 5')
+    _, ew, ep, loggf, slope = (float(x) for x in fields)
+    return ew, ep, loggf, (slope if np.isfinite(slope) else 99.999)
+
+
 def eqw_k2(param1, delta, window):
     """Equivalent width of the line computed by K2 (eqw; eqwb for ABUF) with the abundance changed by
-    delta. Returns (EW [mA], EP [eV], log gf); 99.99, 99.999, 99.999 if K2 gives no result."""
+    delta, and the slope of the curve of growth at that abundance (computed by K2 with A +- 0.1 dex).
+    Returns (EW [mA], EP [eV], log gf, slope); 99.99, 99.999, 99.999, 99.999 if K2 gives no result.
+
+    Raises:
+        K2FormatError: K2 wrote the EW file without the slope (K2 older than salvador 1.4.0 needs).
+    """
     teff = int(param1['teff'])
     logg = float(param1['logg'])
     metal = float(param1['met'])
@@ -653,13 +645,13 @@ def eqw_k2(param1, delta, window):
 
     if exit_code == 0:
         try:
-            wave, ew_k2, EP, loggf = np.loadtxt('info_ew.txt', unpack=True)
-            print('EW = %.2f mA' % ew_k2, '\n')
-        except (FileNotFoundError, IOError, ValueError) as e:
-            print(f'Warning: the EW of K2 could not be read ({type(e).__name__}): EW set to 99.99')
-            ew_k2, EP, loggf = 99.99, 99.999, 99.999
+            ew_k2, EP, loggf, slope = read_info_ew('info_ew.txt')
+            print('EW = %.2f mA' % ew_k2, ('  COG slope = %.3f' % slope) if slope != 99.999 else '  COG slope not available', '\n')
+        except (OSError, ValueError) as e:
+            print(f'Warning: the EW of K2 could not be read ({type(e).__name__}: {e}): EW set to 99.99')
+            ew_k2, EP, loggf, slope = 99.99, 99.999, 99.999, 99.999
     else:
         print('Warning: eqw of k2 did not calculate the EW!!!')
-        ew_k2, EP, loggf = 99.99, 99.999, 99.999
+        ew_k2, EP, loggf, slope = 99.99, 99.999, 99.999, 99.999
 
-    return ew_k2, EP, loggf
+    return ew_k2, EP, loggf, slope

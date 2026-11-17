@@ -6,4 +6,4 @@ SCLIP	 	= 3
 CALC_BEST	= n
 AUTO_RES	= 50
 NPIX_RV		= 0.5
-
+EWR_MAX		= -4.4

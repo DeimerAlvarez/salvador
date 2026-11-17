@@ -23,15 +23,17 @@ from pypdf import PdfWriter
 from . import __version__
 from .config import WORK_DIR, c, cfg, configure_warnings, path_tmp, patterns_to_delete, plt, select_backend
 from .elements import define_abu0, get_element_symbol, solar_table_path, strip_ion, symbol_map
-from .fit_files import add_errors_to_file, append_flag_column, check_if_has_data, count_header_cols, read_fit_file
-from .k2_interface import autok, check_synth_out_linelists, cleanup_linelist_cut
+from .fit_files import (FIT_COLS, add_errors_to_file, append_flag_column, check_if_has_data, count_header_cols,
+                        fit_file_header, read_fit_file)
+from .k2_interface import K2_FORMAT_MESSAGE, K2FormatError, autok, check_synth_out_linelists, cleanup_linelist_cut
 from .line_analysis import ABU_KEYS, measure_line
 from .normalization import find_clipped_regions, load_cw_regions
 from .parallel import cleanup_parallel_work, ensure_models, init_parallel_worker, parallel_available
 from .plotting import fe_diagnostic_plot
 from .rotation import check_rotat_settings
 from .spectra_io import cleaning_tmp_files, model_name_codes, read_spec, select_grid_synthetics
-from .summary import extract_abu_isor, star_abundance_rows
+from .summary import (FLAG_SLOPE, describe_ew_selection, ew_selection_flag, extract_abu_isor, reduced_ew,
+                      slope_available, star_abundance_rows, use_saturated_species)
 
 ###
 ### ANALYSIS OF ONE LINE
@@ -44,12 +46,15 @@ curr_path = Path.cwd()  # working directory of the run (set by run())
 start_time = time.time()    # start of the run (set by run()): only newer temporary files are deleted
 MAX_FAILURES = 3    # the run stops after this number of lines in a row stopped by an error
 
+
 def analyse_line(task):
     """Analysis of one line (see _analyse_line). NEW: an unexpected error stops only this line,
     which is skipped with a message (before, it stopped the whole run, with all the stars); the
     run stops after MAX_FAILURES lines in a row stopped by an error (see run)."""
     try:
         return _analyse_line(task)
+    except K2FormatError:      # K2 without the COG slope: the whole run stops (see main)
+        raise
     except Exception as e:     # noqa: BLE001 -- any error of one line; KeyboardInterrupt still stops
         line = float(task[1])
         print(f'---\nLine {line:.3f}: the analysis stopped with an error ({type(e).__name__}: {e})')
@@ -200,11 +205,20 @@ def _analyse_line(task):
         abu0 = results['abu0']
         EP = results['EP']
         loggf = results['loggf']
-        rec.update(Abu=Abu, ew=ew, emc=emc, EP=EP, loggf=loggf)
+        slope = results.get('slope', 99.999)
+        rec.update(Abu=Abu, ew=ew, emc=emc, EP=EP, loggf=loggf, slope=slope, ewr=reduced_ew(ew, line))
 
-        ewr = np.log10((max(ew, 1e-9) / 1000) / line)
-        if Abu != 99.99 and not (cfg.ewr_min <= ewr <= cfg.ewr_max) and not tana.startswith(('ROTAT', 'MOLEC', 'ABU2', 'ISOR')):
-            rec['flag'] = -1
+        # NEW (1.4.0): selection by the strength of the line: EWR_MIN and the slope of the curve of
+        # growth (COG_SLOPE_MIN, flag -4), or EWR_MIN and EWR_MAX when EWR_MAX is given (flag -1)
+        if Abu != 99.99 and not tana.startswith(('ROTAT', 'MOLEC', 'ABU2', 'ISOR')):
+            ewr_min, ewr_max, slope_min = cfg.ew_selection()
+            flag_ew = ew_selection_flag(ew, line, slope, ewr_min, ewr_max, slope_min)
+            if flag_ew:
+                rec['flag'] = flag_ew
+            if flag_ew == FLAG_SLOPE:
+                print(f'Line {line:.3f}: COG slope {slope:.3f} < COG_SLOPE_MIN = {slope_min:.2f}: not used for the abundances (flag -4)')
+            if slope_min is not None and ew != 99.99 and not slope_available(slope):
+                print(f'Note: line {line:.3f}: K2 gave no COG slope (EW = 0 at A +- 0.1 dex): only the EWR limits are used for this line')
 
         if Abu != 99.99 and not (cfg.ep_min <= EP <= cfg.ep_max) and EP != 99.999 and not tana.startswith(('ROTAT', 'MOLEC', 'ABU2', 'ISOR')):
             rec['flag'] = -2
@@ -254,21 +268,26 @@ def _analyse_line(task):
                 print(f'---\nThe fit with {label} stopped with an error ({type(e).__name__}: {e}): error set to 99.99\n')
                 return 99.99
 
+        # NEW (1.4.0): also for the lines rejected by the COG slope (flag -4): they are used for the
+        # species without other lines (see summary.use_saturated_species), and for the others the
+        # errors show their sensitivity to the parameters
+        computed = rec['flag'] in (0, FLAG_SLOPE)
+
         ### +T_eff
         Abu_pT = Abu
-        if Abu != 99.99 and T_err != 0 and rec['flag'] == 0:
+        if Abu != 99.99 and T_err != 0 and computed:
             Abu_pT = perturbed_fit(f'Teff + {T_err:.0f} K', int(teff + T_err), logg, vt,
                                    f"Variation of Teff: \u0394T = {T_err:.0f} [K] \n")
 
         ### +logg: NEW (1.2.0) for every line (before: only ionized species, MOLEC, ABU2 and ISOR)
         Abu_pg = Abu
-        if Abu != 99.99 and g_err != 0 and rec['flag'] == 0:
+        if Abu != 99.99 and g_err != 0 and computed:
             Abu_pg = perturbed_fit(f'logg + {g_err:.2f}', teff, float(logg + g_err), vt,
                                    '---\nVariation of logg: \u0394logg = %.2f [dex] \n' % (g_err))
 
         ### +vt
         Abu_pv = Abu
-        if ew > 50 and Abu!=99.99 and v_err != 0 and rec['flag'] == 0:
+        if ew > 50 and Abu!=99.99 and v_err != 0 and computed:
             Abu_pv = perturbed_fit(f'vt + {v_err:.2f}', teff, logg, float(vt + v_err),
                                    '---\nVariation of v_t: \u0394vt = %.2f [km/s] \n' % (v_err))
 
@@ -296,8 +315,13 @@ def write_line_result(rec, abu_file, abu_file_isor, flags, kept):
     if ans in ['y', 'r'] and not tana.startswith('ROTAT'):
         Abu, ew, EP, loggf, emc = rec['Abu'], rec['ew'], rec['EP'], rec['loggf'], rec['emc']
         if tana != 'ISOR':
+            # NEW (1.4.0): EWR and SLOPE (slope of the curve of growth from K2) after EW
+            ewr, slope = rec.get('ewr', 99.99), rec.get('slope', 99.999)
+            ewr_txt = '99.99' if ewr == 99.99 else f"{ewr:.2f}"
+            slope_txt = f"{slope:.3f}" if slope_available(slope) else '99.999'
             with open(abu_file, 'a') as f:
-                f.write(f"{name_star:<30}  {line:>8.3f}  {nelem:>5.2f}  {Abu:>5.2f}  {ew:>6.2f}  {EP:>6.3f}  {loggf:>6.3f}  {emc:>5.2f}\n")
+                f.write(f"{name_star:<30}  {line:>8.3f}  {nelem:>5.2f}  {Abu:>5.2f}  {ew:>6.2f}  {ewr_txt:>6}  {slope_txt:>6}  "
+                        f"{EP:>6.3f}  {loggf:>6.3f}  {emc:>5.2f}\n")
         elif tana == 'ISOR':
             with open(abu_file_isor, 'a') as f:
                 f.write(f"{name_star:<30}  {line:>8.3f}  {nelem:>5.2f}  {_isor_txt(Abu, 5)}  {_isor_txt(emc, 3)}\n")
@@ -332,7 +356,7 @@ def write_line_result(rec, abu_file, abu_file_isor, flags, kept):
         new_headers = ["d_Teff", "d_logg", " d_vt"]
         # FIX: only in the file where this line was written (before: also the last row of the other file)
         if tana != 'ISOR':
-            add_errors_to_file(abu_file, new_headers, 8, f"{delta_pT:>5.2f}", f"{delta_pg:>5.2f}", f"{delta_pv:>5.2f}")
+            add_errors_to_file(abu_file, new_headers, len(FIT_COLS), f"{delta_pT:>5.2f}", f"{delta_pg:>5.2f}", f"{delta_pv:>5.2f}")
         else:
             add_errors_to_file(abu_file_isor, new_headers, 5, _isor_txt(delta_pT, 6), _isor_txt(delta_pg, 5), _isor_txt(delta_pv, 4))
 
@@ -428,6 +452,9 @@ def run() -> None:
     print("")
     print("#########################################################")
 
+    print('')
+    # NEW (1.4.0): how the lines are selected by their strength
+    print('Selection of the lines by their strength: ' + describe_ew_selection(*cfg.ew_selection()))
     print('')
 
     ###
@@ -582,13 +609,7 @@ def run() -> None:
 
         abu_file = name_star+'.fit'
         with open(abu_file,'w') as f:
-            f.write('#   FLAG =  1  (USED LINE)\n')
-            f.write('#   FLAG =  0  (REJ. SIGMA-CLIPPING)\n')
-            f.write('#   FLAG = -1  (REJ. EW)\n')
-            f.write('#   FLAG = -2  (REJ. E.P.)\n')
-            f.write('#   FLAG = -3  (REJ. ABU)\n')
-            f.write('#' + '-'*39 + '\n')
-            f.write('#SPECTRUM                           LINE   ELEM    ABU      EW      EP  log_gf    eMC\n')
+            f.write(fit_file_header(describe_ew_selection(*cfg.ew_selection())))
 
         # star_rot.fit is created at the first ROTAT line; remove the one of a previous run
         if os.path.exists(name_star + '_rot.fit'):
@@ -634,7 +655,7 @@ def run() -> None:
 
         col_names_err = ['abu_pT', 'abu_pg', 'abu_pv']
         col_names_base_isor = ['ID', 'line', 'nelem', 'abu', 'abu_mc']
-        col_names_base = ['ID', 'line', 'nelem', 'abu', 'ew', 'EP', 'loggf', 'abu_mc']
+        col_names_base = list(FIT_COLS)
 
         ### star-level data used by analyse_line (inherited by the parallel workers)
         STAR.update(wv=wv, fl=fl, teff=teff, logg=logg, met=met, alpha=alpha, vt=vt,
@@ -730,6 +751,7 @@ def run() -> None:
         # CREATION OF ABUNDANCE_FINAL.TXT FROM ABU_FILE
         if check_if_has_data(abu_file, '#SPECTRUM'):
             ID, nelem, abu, abu_mc, other_nelems, df = read_fit_file(count_header_cols(abu_file), col_names_base, col_names_err, abu_file)  # FIX: column count from the file header
+            flag_line = use_saturated_species(nelem, flag_line, label=name_star)      # NEW (1.4.0)
             param_errors = (df['abu_pT'].values, df['abu_pg'].values, df['abu_pv'].values) if 'abu_pT' in df.columns else None
             # rows of [Fe/H] and [X/Fe] (same function as salvador-merge); without Fe I lines the
             # [M/H] of the model is used as [Fe/H]
@@ -750,7 +772,7 @@ def run() -> None:
             # Fe I abundances against wavelength, excitation potential and reduced EW (same function
             # as salvador-merge); not with a grid of synthetics (no EP)
             if cfg.grid == 'n':
-                fe_diagnostic_plot(abu_file, name_star + '_tmp.pdf', ewr_range=(cfg.ewr_min, cfg.ewr_max))
+                fe_diagnostic_plot(abu_file, name_star + '_tmp.pdf', ewr_range=cfg.ew_selection()[:2])
 
             # --- 1. File names ---
             # The file just saved
@@ -894,7 +916,10 @@ def main(argv: list[str] | None = None) -> int:
     cfg.load(args.input)
     configure_warnings()
     select_backend(cfg.inter)
-    run()
+    try:
+        run()
+    except K2FormatError:
+        stop_run(K2_FORMAT_MESSAGE)     # K2 without the slope of the curve of growth (1.4.0)
     return 0
 
 

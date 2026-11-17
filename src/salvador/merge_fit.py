@@ -13,7 +13,13 @@ Usage (the settings not given on the command line are asked, as before):
 
     salvador-merge                                   # everything asked
     salvador-merge list.txt --solar 1 --flags keep
+    salvador-merge list.txt --solar 1 --flags recalc --sclip 2.5 --ep 0 10 --ewr-min -6 --slope-min 0.35
     salvador-merge list.txt --solar 1 --flags recalc --sclip 2.5 --ep 0 10 --ewr -6 -4.4
+
+NEW (1.4.0): the .fit files are read by the names of their header, so files of any version of
+salvador (with or without the columns EWR and SLOPE) can be merged; the merged file has the columns
+of this version. With --flags recalc the strong lines are rejected by the slope of the curve of
+growth (--slope-min, as COG_SLOPE_MIN) or, with --ewr MIN MAX, by the reduced EW (as EWR_MAX).
 """
 import argparse
 import os
@@ -23,29 +29,20 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
-import pandas as pd
 
 from . import __version__
-from .config import Config, cfg
-from .fit_files import replace_flag_column
+from .config import EWR_MAX_DEFAULT, Config, cfg
+from .fit_files import ERR_COLS, FIT_COLS, fit_file_header, read_fit_rows, read_fit_table, replace_flag_column
 from .plotting import fe_diagnostic_plot
-from .summary import star_abundance_rows
+from .summary import describe_ew_selection, ew_selection_flag, star_abundance_rows, use_saturated_species
 
 ### solar references: choice of salvador-merge -> name (column of solar_abu.txt = choice + 1, the
 ### value of SOLAR_REF in input.salvador)
 SOLAR_REFERENCES = {1: 'CL', 2: 'GS98', 3: 'Magg22', 4: 'Asp09'}
 
-COLS_BASE = ['ID', 'line', 'nelem', 'abu', 'ew', 'EP', 'loggf', 'abu_mc']
-COLS_ERR = ['abu_pT', 'abu_pg', 'abu_pv']
-MISSING_ERRORS = ['99.99', '99.99', '99.99']
-
-FIT_HEADER = ('#   FLAG =  1  (USED LINE)\n'
-              '#   FLAG =  0  (REJ. SIGMA-CLIPPING)\n'
-              '#   FLAG = -1  (REJ. EW)\n'
-              '#   FLAG = -2  (REJ. E.P.)\n'
-              '#   FLAG = -3  (REJ. ABU)\n'
-              '#' + '-' * 39 + '\n'
-              '#SPECTRUM                           LINE   ELEM    ABU      EW      EP  log_gf    eMC')
+COLS_BASE = list(FIT_COLS)         # NEW (1.4.0): with EWR and SLOPE
+COLS_ERR = list(ERR_COLS)
+DEFAULT_SLOPE_MIN = 0.35            # as COG_SLOPE_MIN
 
 FINAL_HEADER = ('#STAR\t\t= name of the spectrum \n'
                 '#CODE\t\t= element code in kurucz format \n'
@@ -72,13 +69,25 @@ class MergeSettings:
             the .fit files are used.
         sclip: Sigma of the clipping (recalc only).
         ep: (min, max) excitation potential [eV] (recalc only).
-        ewr: (min, max) reduced EW, log(EW/lambda) (recalc only).
+        ewr_min: Minimum reduced EW, log(EW/lambda) (recalc only).
+        ewr_max: Maximum reduced EW (recalc only; with slope_min it only removes the very strong
+            lines, as EWR_MAX_DEFAULT in salvador).
+        slope_min: Minimum slope of the curve of growth (recalc only); None: selection by ewr_min
+            and ewr_max only (NEW 1.4.0, as EWR_MAX and COG_SLOPE_MIN in salvador).
     """
     solar: int
     recalc: bool
     sclip: float = 3.0
     ep: tuple[float, float] = (0.0, 10.0)
-    ewr: tuple[float, float] = (-6.0, -4.4)
+    ewr_min: float = -6.0
+    ewr_max: float = EWR_MAX_DEFAULT
+    slope_min: float | None = DEFAULT_SLOPE_MIN
+
+    def selection(self) -> str:
+        """The selection of the lines by their strength, as written in the merged .fit file."""
+        if not self.recalc:
+            return 'flags of the merged .fit files (not recalculated)'
+        return describe_ew_selection(self.ewr_min, self.ewr_max, self.slope_min)
 
 
 def get_type_input(prompt: str, target_type: type, valid: Callable | None = None, hint: str = '') -> object:
@@ -95,6 +104,27 @@ def get_type_input(prompt: str, target_type: type, valid: Callable | None = None
         print(f"Error: {hint}")
 
 
+def _ask_strength_selection(args: argparse.Namespace, settings: MergeSettings) -> None:
+    """Selection of the lines by their strength (recalc): from the command line, otherwise asked.
+    NEW (1.4.0): the COG slope (as COG_SLOPE_MIN, with EWR_MAX_DEFAULT against the very strong
+    lines) or the reduced EW only (as EWR_MAX)."""
+    if args.ewr is not None:
+        settings.ewr_min, settings.ewr_max = args.ewr
+        settings.slope_min = None
+        return
+    if args.slope_min is None and args.ewr_min is None:
+        use_ewr = get_type_input('Reject the strong lines by the COG slope (0) or by a maximum EWR (1)?:  ', int,
+                                 lambda v: v in (0, 1), 'choose 0 or 1.') == 1
+        if use_ewr:
+            settings.ewr_min, settings.ewr_max = _ask_range('EWR', '-6.0', str(EWR_MAX_DEFAULT))
+            settings.slope_min = None
+            return
+    settings.ewr_min = args.ewr_min if args.ewr_min is not None else get_type_input('Insert EWR min (es. -6.0): ', float)
+    settings.slope_min = args.slope_min if args.slope_min is not None else get_type_input(
+        f'Insert COG slope min (es. {DEFAULT_SLOPE_MIN}): ', float, lambda v: v >= 0, 'the value cannot be negative.')
+    settings.ewr_max = EWR_MAX_DEFAULT
+
+
 def _ask_range(name: str, low_default: str, high_default: str) -> tuple[float, float]:
     """Ask for the minimum and the maximum of a range (minimum < maximum)."""
     low = get_type_input(f"Insert {name} min (es. {low_default}): ", float)
@@ -103,54 +133,35 @@ def _ask_range(name: str, low_default: str, high_default: str) -> tuple[float, f
     return low, high
 
 
-def _normalized_row(fields: list[str]) -> tuple[list[str], list[str], str] | None:
-    """(base columns, error columns, flag) of a data row of a .fit file, whatever the version that
-    wrote it: 12 fields (with errors and flag), 11 (errors, no flag), 9 (flag, no errors: also the
-    rejected lines of the interactive mode before salvador 1.1.0), 8 (neither). Missing errors are
-    99.99, a missing flag is 0. None for a row that cannot be read."""
-    if len(fields) == 12:
-        return fields[:8], fields[8:11], fields[11]
-    if len(fields) == 11:
-        return fields[:8], fields[8:11], '0'
-    if len(fields) == 9:
-        return fields[:8], list(MISSING_ERRORS), fields[8]
-    if len(fields) == 8:
-        return fields[:8], list(MISSING_ERRORS), '0'
-    return None
-
-
-def merge_files(input_filenames: list[str], output_filename: str) -> bool:
-    """Write the merged .fit file. FIX: all the rows have the same columns: rows without the
-    parameter errors (other runs, or rejected in the interactive mode) get 99.99 (before, the
-    columns of those rows were misaligned and the merge failed). Returns False if nothing was read."""
-    rows, any_errors, ok = [], False, False
+def merge_files(input_filenames: list[str], output_filename: str, selection: str = '') -> bool:
+    """Write the merged .fit file, with the columns of this version (NEW 1.4.0: the files are read
+    by the names of their header, see fit_files.read_fit_rows, so files of older versions, without
+    EWR and SLOPE, can be merged). FIX: all the rows have the same columns: rows without the
+    parameter errors (other runs, or rejected in the interactive mode) get 99.99. Returns False if
+    nothing was read."""
+    rows, any_errors, ok, without_slope = [], False, False, 0
     for fname in input_filenames:
         if not os.path.exists(fname):
             print(f"Attention: File {fname} not found.")
             continue
         ok = True
-        with open(fname) as f:
-            header = next((r for r in f if r.startswith('#SPECTRUM')), '')
-        file_has_errors = 'd_Teff' in header
+        file_rows, file_has_errors = read_fit_rows(fname)
         any_errors |= file_has_errors
-        with open(fname) as f:
-            for k, line in enumerate(f, 1):
-                if not line.strip() or line.lstrip().startswith('#'):
-                    continue
-                parsed = _normalized_row(line.split())
-                if parsed is None:
-                    print(f"Attention: row {k} of {fname} has {len(line.split())} columns: skipped")
-                    continue
-                rows.append(parsed)
+        rows += file_rows
+        without_slope += sum(r['slope'] == '99.999' and r['ew'] != '99.99' for r in file_rows)
         if not file_has_errors:
             print(f"Note: {fname} has no errors due to the atmospheric parameters (99.99 in the merged file)")
     if not ok:
         return False
+    if without_slope and 'COG slope >=' in selection:      # only when the slope is used (recalc)
+        print(f"Note: {without_slope} line(s) with an EW but without the COG slope (files of salvador < 1.4.0, "
+              f"grid mode, or K2 could not compute it): with --flags recalc only the EWR limits are used for them")
 
+    cols = COLS_BASE + (COLS_ERR if any_errors else []) + ['flag']
     with open(output_filename, 'w') as out:
-        out.write(FIT_HEADER + ('  d_Teff d_logg  d_vt' if any_errors else '') + '  flag_line\n')
-        for base, errors, flag in rows:
-            out.write("\t".join(base + (errors if any_errors else []) + [flag]) + "\n")
+        out.write(fit_file_header(selection).rstrip('\n') + ('  d_Teff d_logg  d_vt' if any_errors else '') + '  flag_line\n')
+        for row in rows:
+            out.write("\t".join(row[c] for c in cols) + "\n")
     return True
 
 
@@ -189,7 +200,7 @@ def process_group(group: list[str], settings: MergeSettings) -> None:
     output_filename = last_line_parts[0]
     external_feh = _external_feh(last_line_parts, output_filename)
 
-    if not merge_files(group[:-1], output_filename):
+    if not merge_files(group[:-1], output_filename, settings.selection()):
         return
     print(f"{output_filename} created.")
     if external_feh is not None:
@@ -221,10 +232,9 @@ def analyze_abundances(abu_file: str, settings: MergeSettings, external_feh: tup
     abundance_final_merged.txt) and its Fe plot."""
     try:
         with open(abu_file) as f:
-            header = next((r for r in f if r.startswith('#SPECTRUM')), '')
-        names = COLS_BASE + (COLS_ERR if 'd_Teff' in header else []) + ['flag']
-        df = pd.read_csv(abu_file, sep=r"\s+", comment='#', header=None, names=names)
-    except (OSError, ValueError, pd.errors.ParserError) as e:
+            has_errors = 'd_Teff' in next((r for r in f if r.startswith('#SPECTRUM')), '')
+        df = read_fit_table(abu_file)
+    except (OSError, ValueError) as e:
         print(f"Error during the analysis of {abu_file}: {e}")
         return
     if df.empty:
@@ -237,17 +247,20 @@ def analyze_abundances(abu_file: str, settings: MergeSettings, external_feh: tup
     flag_line = df['flag'].to_numpy(dtype=int, copy=True)
 
     if settings.recalc:
-        EW = df['ew'].to_numpy(dtype=float)
         EP = df['EP'].to_numpy(dtype=float)
-        EWR = np.log10((np.maximum(EW, 1e-9) / 1000) / df['line'].to_numpy(dtype=float))
-        # start again from all the lines with an abundance (the -1/-2 flags of the old limits are reset)
+        # start again from all the lines with an abundance (the -1/-2/-4 flags of the old limits are reset)
         flag_line = np.where(abu != 99.99, 0, flag_line)
         has_abu = abu != 99.99
-        # FIX: the EW limits only for the lines with an EW (99.99 = not available, e.g. molecules)
-        flag_line[has_abu & (EW != 99.99) & ((EWR < settings.ewr[0]) | (EWR > settings.ewr[1]))] = -1
+        # NEW (1.4.0): the same selection as salvador (summary.ew_selection_flag): reduced EW and
+        # COG slope (-4), or reduced EW only with --ewr; lines without EW (99.99) are not judged
+        for i in np.where(has_abu)[0]:
+            flag_line[i] = ew_selection_flag(df['ew'].iat[i], df['line'].iat[i], df['slope'].iat[i],
+                                             settings.ewr_min, settings.ewr_max, settings.slope_min)
         flag_line[has_abu & (EP != 99.999) & ((EP < settings.ep[0]) | (EP > settings.ep[1]))] = -2
+        if settings.slope_min is not None:      # saturated lines of the species without other lines
+            flag_line = use_saturated_species(nelem, flag_line, label=ID)
 
-    param_errors = tuple(df[c].to_numpy(dtype=float, copy=True) for c in COLS_ERR) if 'abu_pT' in df.columns else None
+    param_errors = tuple(df[c].to_numpy(dtype=float, copy=True) for c in COLS_ERR) if has_errors else None
     rows, flag_line = star_abundance_rows(ID, nelem, abu, abu_mc, flag_line, param_errors, feh_model=None,
                                           external_feh=external_feh, select_flag=0 if settings.recalc else 1,
                                           clip=settings.recalc)
@@ -274,7 +287,11 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
                         help='recalc: recalculate the flags (EW, EP limits and sigma-clipping); keep: use the flags of the .fit files')
     parser.add_argument('--sclip', type=float, help='sigma of the sigma-clipping (with --flags recalc)')
     parser.add_argument('--ep', type=float, nargs=2, metavar=('MIN', 'MAX'), help='excitation potential limits [eV] (with --flags recalc)')
-    parser.add_argument('--ewr', type=float, nargs=2, metavar=('MIN', 'MAX'), help='reduced EW limits, log(EW/lambda) (with --flags recalc)')
+    parser.add_argument('--ewr', type=float, nargs=2, metavar=('MIN', 'MAX'),
+                        help='reduced EW limits, log(EW/lambda), instead of the COG slope (as EWR_MAX; with --flags recalc)')
+    parser.add_argument('--ewr-min', type=float, metavar='MIN', help='minimum reduced EW (with --slope-min; with --flags recalc)')
+    parser.add_argument('--slope-min', type=float, metavar='S',
+                        help=f'minimum slope of the curve of growth (as COG_SLOPE_MIN, e.g. {DEFAULT_SLOPE_MIN}; with --flags recalc)')
     parser.add_argument('--version', action='version', version=f'salvador {__version__}')
     args = parser.parse_args(argv)
     if args.sclip is not None and args.sclip <= 0:
@@ -283,6 +300,10 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
         value = getattr(args, name)
         if value is not None and value[0] >= value[1]:
             parser.error(f'--{name}: MIN must be smaller than MAX')
+    if args.ewr is not None and (args.slope_min is not None or args.ewr_min is not None):
+        parser.error('--ewr (selection by the reduced EW) cannot be used with --slope-min or --ewr-min')
+    if args.slope_min is not None and args.slope_min < 0:
+        parser.error('--slope-min cannot be negative')
     return args
 
 
@@ -304,12 +325,12 @@ def main(argv: list[str] | None = None) -> int:
 
     settings = MergeSettings(solar=solar, recalc=recalc)
     if recalc:
-        if args.sclip is None or args.ep is None or args.ewr is None:
-            print("\n--- Parameters for sigma, EWR, and EP clipping ---")
+        if args.sclip is None or args.ep is None or (args.ewr is None and (args.slope_min is None or args.ewr_min is None)):
+            print("\n--- Parameters for sigma, EP and line-strength (EWR, COG slope) clipping ---")
         settings.sclip = args.sclip if args.sclip is not None else get_type_input(
             'Insert value for sigma clipping? ', float, lambda v: v > 0, 'the value must be positive.')
         settings.ep = tuple(args.ep) if args.ep is not None else _ask_range('EP', '0.0', '10.0')
-        settings.ewr = tuple(args.ewr) if args.ewr is not None else _ask_range('EWR', '-6.0', '-4.0')
+        _ask_strength_selection(args, settings)
         print('')
 
     # settings used by the shared functions: sigma-clipping and solar reference (column = choice + 1)

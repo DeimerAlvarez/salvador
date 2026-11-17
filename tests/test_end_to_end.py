@@ -100,7 +100,7 @@ def test_version_and_check(tmp_path):
 
 def test_mc_error_for_elements_with_few_lines(parallel_run):
     # fewer than 10 lines of Fe here: the Monte Carlo error is computed (99.99 otherwise)
-    emc = {row[1]: row[7] for row in parallel_run.data_rows(f'{STAR}.fit')}
+    emc = {row[1]: row[9] for row in parallel_run.data_rows(f'{STAR}.fit')}
     assert emc['7461.519'] != '99.99'
 
 
@@ -117,7 +117,8 @@ def test_merge_of_fit_files(tmp_path):
     (tmp_path / 'part1.fit').write_text(fit)
     (tmp_path / 'part2.fit').write_text(fit)
     (tmp_path / 'list.txt').write_text('part1.fit\npart2.fit\nmerged.fit\n')
-    answers = 'list.txt\n1\n0\n3\n0\n10\n-6.1\n-4.4\n'      # list, solar ref, recalc flags, sclip, EP and EWR limits
+    # list, solar ref, recalc flags, sclip, EP limits, selection by EWR (1; 0 = COG slope), EWR limits
+    answers = 'list.txt\n1\n0\n3\n0\n10\n1\n-6.1\n-4.4\n'
     proc = subprocess.run([sys.executable, '-m', 'salvador.merge_fit'], cwd=tmp_path, input=answers,
                           capture_output=True, text=True, env={**os.environ, 'MPLBACKEND': 'Agg'}, timeout=300)
     assert proc.returncode == 0, proc.stdout + proc.stderr

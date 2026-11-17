@@ -2,6 +2,7 @@
 import warnings
 import zlib
 from collections.abc import Sequence
+from dataclasses import dataclass
 import numpy as np
 import pandas as pd
 from scipy.integrate import trapezoid
@@ -83,6 +84,69 @@ def fwhm_empirica(wvl_fit, flux_fit):
         plt.show()
 
     return fwhm_measured, center_measured
+
+@dataclass
+class ShiftResult:
+    """Result of template_shift: shift [A] to subtract from the observed wavelengths, its error [A],
+    the depth of the line in units of the noise, and whether it can be applied (reason if not)."""
+    shift: float
+    error: float
+    depth_snr: float
+    ok: bool
+    reason: str = ''
+
+
+def template_shift(wave: np.ndarray, flux: np.ndarray, wave_t: np.ndarray, flux_t: np.ndarray,
+                   lo: float, hi: float, max_shift: float, pixel: float, step_pix: float = 0.02,
+                   min_depth_snr: float = 3.0) -> ShiftResult:
+    """Local wavelength shift of an observed line, by fitting a template (NEW 1.4.0).
+
+    The observed pixels between lo and hi are fitted with c + a * (T(lambda - d) - 1), where T is
+    the broadened synthetic spectrum (it contains the blends and the hyperfine/isotopic structure
+    of the line), c (continuum level) and a (depth scale) are free (linear least squares) and d is
+    scanned from -(max_shift + 0.5 pixel) to +(max_shift + 0.5 pixel) in steps of step_pix pixels.
+    The minimum of the chi2 is refined with a parabola; its error is the shift where the chi2 grows
+    by the variance of the residuals (Delta chi2 = 1). The shift is applied only if the minimum is
+    inside the scanned range and within max_shift, and the line is detected (a > 0 and depth of the
+    fitted line > min_depth_snr times the noise).
+
+    Args:
+        wave, flux: Observed (normalized) spectrum.
+        wave_t, flux_t: Template (broadened synthetic spectrum).
+        lo, hi: Region of the fit [A].
+        max_shift: Largest shift that can be applied [A] (NPIX_RV pixels).
+        pixel: Pixel step of the observed spectrum [A].
+    """
+    mask = (wave >= lo) & (wave <= hi)
+    x, y = np.asarray(wave, float)[mask], np.asarray(flux, float)[mask]
+    if x.size < 5 or pixel <= 0:
+        return ShiftResult(0.0, 0.0, 0.0, False, 'too few pixels')
+    wave_t, flux_t = np.asarray(wave_t, float), np.asarray(flux_t, float)
+    span = max_shift + 0.5 * pixel
+    shifts = np.arange(-span, span + 0.5 * step_pix * pixel, step_pix * pixel)
+    chi2, coefs = np.empty(shifts.size), []
+    for k, d in enumerate(shifts):
+        design = np.c_[np.ones_like(x), np.interp(x - d, wave_t, flux_t) - 1.0]
+        coef, *_ = np.linalg.lstsq(design, y, rcond=None)
+        chi2[k] = np.sum((y - design @ coef) ** 2)
+        coefs.append(coef)
+    k = int(np.argmin(chi2))
+    a = coefs[k][1]
+    sigma2 = chi2[k] / max(x.size - 3, 1)                       # variance of the residuals
+    depth = a * (1.0 - np.min(np.interp(x - shifts[k], wave_t, flux_t)))
+    depth_snr = depth / np.sqrt(sigma2) if sigma2 > 0 else np.inf
+    if k in (0, shifts.size - 1):
+        return ShiftResult(shifts[k], np.inf, depth_snr, False, 'no minimum within the allowed shift')
+    c_m, c_0, c_p = chi2[k - 1], chi2[k], chi2[k + 1]
+    curvature = (c_m - 2 * c_0 + c_p) / (shifts[1] - shifts[0]) ** 2       # d2 chi2 / d shift2
+    shift = shifts[k] + (0.5 * (c_m - c_p) / (c_m - 2 * c_0 + c_p) * (shifts[1] - shifts[0]) if curvature > 0 else 0.0)
+    error = float(np.sqrt(2 * sigma2 / curvature)) if curvature > 0 else np.inf
+    if a <= 0 or depth_snr < min_depth_snr:
+        return ShiftResult(shift, error, depth_snr, False, f'line not detected (depth = {depth_snr:.1f} x noise)')
+    if abs(shift) > max_shift:
+        return ShiftResult(shift, error, depth_snr, False, 'shift larger than NPIX_RV')
+    return ShiftResult(float(shift), error, float(depth_snr), True)
+
 
 def new_res_est(wvl, flux, line, resol, fit1, fit2, tana):
     """Measure the observed line between fit1 and fit2: FWHM, center and area, each the mean of a

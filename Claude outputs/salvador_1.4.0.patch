@@ -1,0 +1,2392 @@
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index 7ac116a..06af636 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -1,5 +1,93 @@
+ # Changelog
+ 
++## 1.4.0
++
++Needs the version of K2 of November 2026 (or later): its `eqw` writes in `info_ew.txt` the slope
++of the curve of growth of the line, S = d log(EW/lambda) / d A(X), computed with A(X) +- 0.1 dex
++(5 columns: wavelength, EW, EP, log gf, S). With an older K2 the run stops with the message
++"salvador needs EW file with the COG slope".
++
++### Added
++
++* Selection of the strong lines by the slope of the curve of growth: keyword `COG_SLOPE_MIN`
++  (default 0.35). A line with S < `COG_SLOPE_MIN` is not used for the abundances (new flag -4, REJ.
++  COG SLOPE), unless its species has no other usable line (see below). The default comes from the
++  curves of growth of 954 Fe I lines of a metal-poor giant computed with K2 (Teff 4500 K, logg
++  0.70, [M/H] -1.5, vt 2.0 km/s): a line leaves the linear part
++  between S ~ 0.9 and 0.35 (largest curvature at S ~ 0.67); S = 0.35 corresponds to log(EW/lambda)
++  ~ -4.79 (~80 mA at 5000 A, 0.39 dex below the linear curve of growth), with a dependence on the
++  wavelength that a fixed EWR limit does not follow. Lines with hyperfine or isotopic splitting are
++  less saturated than single lines of the same EW, and keep a larger S.
++* `EWR_MAX` is now optional, without default: if it is given in `input.salvador`, the lines are
++  selected by `EWR_MIN` and `EWR_MAX` and the slope is not used (as in the previous versions).
++  Without `EWR_MAX`, the selection is `EWR_MIN` and `COG_SLOPE_MIN`, plus a fixed limit EWR <= -4.4
++  against the very strong lines, whose slope rises again in the damping part (S = 0.4-0.5 at EW ~
++  450-700 mA). That limit is `EWR_MAX_DEFAULT` in `src/salvador/config.py`. With a grid of
++  synthetics (`PATH_SYN`, no slope), `EWR_MAX` (default -4.4) is used. A line without slope (K2
++  could not compute it) is selected by its EWR only, with a note.
++* `.fit` files: new columns `EWR` = log(EW/lambda) and `SLOPE` after `EW` (99.99/99.999 when not
++  available), the flag -4 and a header line with the selection used. The selection is also printed
++  at the start of the run.
++* Saturated lines of the species without other lines: when all the lines of a species that have an
++  abundance are flagged -4 (no line with flag 0), they are used anyway (e.g. K I 7699, the Ba II
++  lines of a cool giant), with a note in the output; for a species with unsaturated lines the
++  saturated ones stay rejected. The same in `salvador-merge --flags recalc`.
++* The parameter errors (`d_Teff`, `d_logg`, `d_vt`) are computed also for the lines with flag -4:
++  for the saturated lines used as above they give the larger uncertainty of the abundance (e.g. K I
++  7699 in the tutorial star, S = 0.18: Teff +-100 K -> +-0.18 dex, vt +-0.2 km/s -> +-0.13 dex);
++  for the others they show how sensitive they are.
++* Plots: the main panel has a legend with the resolution used for the line (with `AUTO_RES`, the
++  measured one).
++
++### Changed
++
++* `salvador-merge` reads the `.fit` files by the names of their columns, so files of any version
++  (with or without `EWR` and `SLOPE`) can be merged; the merged file has the columns of 1.4.0 (EWR
++  computed from EW for the old files, SLOPE 99.999). With `--flags recalc` the selection is the
++  same as in salvador: new options `--ewr-min` and `--slope-min`, or `--ewr MIN MAX` for the EWR
++  limits only; when asked, the choice between the two.
++* `salvador-regression` compares the columns with the same name when the columns of a file changed
++  (e.g. a reference made with 1.3.0), and lists the columns present in only one of the two files.
++* `salvador-check-k2` also compares the slopes.
++* Local RV correction (`NPIX_RV`): the shift is now measured by fitting the broadened synthetic
++  spectrum of the starting abundance to the observed line, c + a (T(lambda - d) - 1), with the
++  continuum level c and the depth scale a free, d scanned in steps of 0.02 pixels and refined with
++  a parabola (error from the curvature of the chi2). The template contains the blends and the
++  hyperfine/isotopic structure, so blended, weak and asymmetric lines no longer bias the shift. The
++  shift is applied only if it is within `NPIX_RV` pixels, the minimum is not at the edge of the scan
++  and the line is detected (depth > 3 times the noise); otherwise a message says why it was not
++  applied (printed also without `VERBOSE`). Before, the centre of the observed line (Gaussian fit
++  and half depth) was compared with the laboratory wavelength, and the shift was applied whenever
++  it was within `NPIX_RV`. Not used for `ABU2` lines (their fit regions exclude the core).
++* Plots: in the main panel, windows wider than ~20 A (up to 50 A) have a label every 5 or 10 A (at
++  most 10 labels, at multiples of the step) and minor ticks every 1 A: before, the labels overlapped.
++  Smaller windows are as before. In the zoom panel the first and last labels are aligned inside the
++  panel.
++* The shortcut `K2_FAST_MODEL_CHECK` (check of the existing model atmosphere before the ODF
++  interpolation, done by wrapping a K2 method) was removed: K2 now does it itself.
++* A line without EW (99.99, e.g. K2 failed) is not judged by the EW limits (before: its EWR was
++  computed from 99.99 mA).
++
++### Fixed
++
++* When all the Fe I lines of a star were rejected (e.g. by the EW limits), [Fe/H] was 99.99 and
++  entered the [X/Fe] (e.g. [Mg/Fe] = -100.51): now the [M/H] of the model is used, as for a star
++  without Fe I lines (salvador-merge: [X/Fe] not available).
++* The trimmed linelists ignore, as K2 does, the comment lines of `linelist.xkur` (lines starting
++  with `#` that are not section markers) and recognise the markers in lower case (before, the
++  comments were taken as file names).
++
++### Tests
++
++* The stand-in for K2 writes the slope (from the median curve of growth of the Fe I lines, or
++  `FAKE_K2_SLOPE`), can write the old 4-column file (`FAKE_K2_EW_COLUMNS = 4`), and with
++  `FAKE_K2_INTERPOLATE = 1` interpolates in the abundance a synthetic missing from the cache.
++* Case ABU2: `EWR_MAX = -4.4` in its `input.salvador` (selection of the previous versions); with the
++  new RV correction the Fe line is found 0.04 pixels to the blue (before: 0.13 pixels to the red):
++  A(Fe) +0.01 dex, d_Teff and d_vt -0.01 dex (expected files updated; the fits at the new
++  abundances use interpolated synthetics). In the cases ISOR and MOLEC the template fit gives
++  shifts larger than `NPIX_RV`, so no correction is applied: results unchanged.
++
+ ## 1.3.0
+ 
+ ### Added
+diff --git a/CITATION.cff b/CITATION.cff
+index 697ff65..4c7e784 100644
+--- a/CITATION.cff
++++ b/CITATION.cff
+@@ -2,7 +2,7 @@ cff-version: 1.2.0
+ message: "If you use salvador in your research, please cite it as below (a paper is in preparation), together with K2 and the Kurucz codes."
+ title: "salvador: chemical abundances of stars by spectral synthesis with the Kurucz codes"
+ type: software
+-version: 1.3.0
++version: 1.4.0
+ license: MIT
+ repository-code: "https://github.com/DeimerAlvarez/salvador"
+ keywords:
+diff --git a/README.md b/README.md
+index a52d61b..c392706 100644
+--- a/README.md
++++ b/README.md
+@@ -19,7 +19,7 @@ The atmospheric parameters must be known: salvador does not determine them.
+ It works in automatic or interactive mode, analyses several lines in parallel (automatic mode),
+ and writes a PDF with the fit of every line.
+ 
+-> **Status:** 1.3.0. The full manual is [docs/salvador_instructions.pdf](docs/salvador_instructions.pdf).
++> **Status:** 1.4.0. The full manual is [docs/salvador_instructions.pdf](docs/salvador_instructions.pdf).
+ 
+ 
+ ## Requirements
+@@ -28,7 +28,8 @@ and writes a PDF with the fit of every line.
+ * **K2 and the Kurucz codes**, to compute the synthetic spectra (not needed if you only use a
+   grid of precomputed synthetics, keyword `PATH_SYN`). K2 will be distributed from the
+   [KOALA software page](https://sites.google.com/view/koala-database/software); follow its
+-  instructions. The command `k2.py` must be in your `PATH`.
++  instructions. The command `k2.py` must be in your `PATH`. salvador 1.4.0 needs the version of K2
++  of November 2026 (or later), which gives the slope of the curve of growth of each line.
+ * The Python packages (numpy, scipy, pandas, matplotlib, astropy, specutils ≥ 2.0, PyAstronomy,
+   pypdf) are installed automatically by `pip`.
+ 
+@@ -118,12 +119,18 @@ given on the command line; those that are missing are asked:
+ ```bash
+ salvador-merge                                   # everything asked, as in the previous versions
+ salvador-merge list.txt --solar 1 --flags keep   # use the flags of the .fit files
++salvador-merge list.txt --solar 1 --flags recalc --sclip 2.5 --ep 0 10 --ewr-min -6 --slope-min 0.35
+ salvador-merge list.txt --solar 1 --flags recalc --sclip 2.5 --ep 0 10 --ewr -6 -4.4
+ ```
+ 
+ `--solar`: 1 = Caffau & Lodders, 2 = Grevesse & Sauval 1998, 3 = Magg et al. 2022, 4 = Asplund et
+-al. 2009. `--flags recalc` recalculates the flags (EW and EP limits, sigma-clipping); `keep` uses
+-those of the `.fit` files. The abundances are computed with the same functions as `salvador`.
++al. 2009. `--flags recalc` recalculates the flags (EP limits, selection of the strong lines,
++sigma-clipping); `keep` uses those of the `.fit` files. The strong lines are rejected by the slope
++of the curve of growth (`--ewr-min`, `--slope-min`, as `EWR_MIN` and `COG_SLOPE_MIN`) or, with
++`--ewr MIN MAX`, by the reduced EW (as `EWR_MAX`); as in `salvador`, the saturated lines of a
++species without other usable lines are kept. The `.fit` files of any version can be merged (they
++are read by the names of their columns). The abundances are computed with the same functions
++as `salvador`.
+ 
+ The functions are in the package `salvador`, one module per topic
+ ([docs/FUNCTION_MAP.txt](docs/FUNCTION_MAP.txt)); `from salvador.utilities import *` gives all of them.
+diff --git a/docs/FUNCTION_MAP.txt b/docs/FUNCTION_MAP.txt
+index 1d6a360..661bb3e 100644
+--- a/docs/FUNCTION_MAP.txt
++++ b/docs/FUNCTION_MAP.txt
+@@ -32,14 +32,17 @@ convolve_gauss2            salvador/fitting.py            Broaden one spectrum t
+ convolve_rows              salvador/rotation.py           Convolve each row of spectra (n, npix) with kernel; the edges are extended with the first
+ count_header_cols          salvador/fit_files.py          Number of columns declared in the '#SPECTRUM' header of a .fit file (0 if not found).
+ define_abu0                salvador/elements.py           Abundance of the element in the model atmosphere: solar value + [M/H], + the alpha-enhancement
++describe_ew_selection      salvador/summary.py            One line describing the selection of the lines by their strength (printed and written in
+ ensure_models              salvador/parallel.py           Compute (if missing) the ATLAS9 models needed by the parallel workers, before they start,
+ eqw_k2                     salvador/k2_interface.py       Equivalent width of the line computed by K2 (eqw; eqwb for ABUF) with the abundance changed by
++ew_selection_flag          salvador/summary.py            Flag of a line from its strength: 0 (kept), FLAG_EW (-1) or FLAG_SLOPE (-4).
+ extract_abu                salvador/summary.py            [X/Fe] of the species nel and its errors, combined with those of Fe (s_stat_Fe, fe_errors);
+ extract_abu_fe             salvador/summary.py            [Fe/H] from the Fe I (or Fe II) lines: mean, errors and the absolute abundance (params_XH).
+ extract_abu_isor           salvador/summary.py            Isotopic ratio of the species nel: mean and errors, rounded to integers.
+ FailureCounter             salvador/cli.py                Lines in a row stopped by an error: the run stops at MAX_FAILURES (most likely a problem
+ fe_diagnostic_plot         salvador/plotting.py           Fe I (and Fe II) abundances of a .fit file against wavelength, excitation potential and
+ find_clipped_regions       salvador/normalization.py      Continuum regions cleaned of absorption features: in each region the pixels outside 5 sigma
++fit_file_header            salvador/fit_files.py          Header of the .fit file: meaning of the flags, selection of the lines by their strength
+ format_axes                salvador/plotting.py           Style of an axis: ticks inside on all sides, minor ticks, thick frame.
+ fwhm_empirica              salvador/fitting.py            Empirical FWHM and center of an absorption line, from the two points where a spline of the
+ gaussian                   salvador/fitting.py            Gaussian profile on a continuum: aux = (height, center, width (sigma), offset).
+@@ -56,6 +59,7 @@ interp_in_abundance        salvador/fitting.py            Linear interpolation i
+ is_line_in_grid            salvador/spectra_io.py         True if the wavelength range in the name of a grid synthetic (..._w1_w2.nb) contains the line.
+ isolate_pure_line          salvador/fitting.py            Part of a synthetic profile that belongs to the main line only: from the minimum, outwards
+ k2_linelist                salvador/k2_interface.py       Linelist file to pass to K2 for the window [w1, w2] (A). The last 3 windows are kept.
++K2FormatError              salvador/k2_interface.py       The EW file of K2 (info_ew.txt) has no slope of the curve of growth: K2 is older than the
+ LazyConfig                 salvador/config.py             The settings of the run (a Config), read from input.salvador at the first use.
+ linelist_fingerprint       salvador/k2_interface.py       linelist.xkur (its text) and the size and modification time of each file it lists; None if
+ load_config                salvador/config.py             Read, convert and check the keywords of input.salvador. Stops with a clear message if a
+@@ -78,34 +82,43 @@ process_names_grid         salvador/spectra_io.py         Abundance offsets enco
+ read_abu_var_rows          salvador/k2_interface.py       All the rows of an abundance-variation file: (keyword in capitals, element code, values),
+ read_delta_file            salvador/k2_interface.py       Read an abundance-variation file: {element code: (value, keyword)} for its DELTA, GF and ABS
+ read_fit_file              salvador/fit_files.py          Read a .fit file with pandas, with the error columns when the file has them.
++read_fit_rows              salvador/fit_files.py          Rows of a .fit file of ANY version of salvador, as text, with the columns of this version:
++read_fit_table             salvador/fit_files.py          A .fit file of any version (see read_fit_rows) as a DataFrame with the columns FIT_COLS, the
+ read_grid_file             salvador/spectra_io.py         Read a grid synthetic (cached, read-only arrays: see GRID_CACHE_SIZE).
++read_info_ew               salvador/k2_interface.py       EW [mA], EP [eV], log gf and slope of the curve of growth from the EW file of K2.
+ read_solar_data            salvador/elements.py           Read the table of solar abundances (default: solar_table_path()): one list of fields per
+ read_spec                  salvador/spectra_io.py         Read an observed spectrum: FITS (wavelengths from CRVAL1, CDELT1 or CD1_1, CRPIX1) or ASCII
+ read_two_columns           salvador/spectra_io.py         SPEED: fast reader for 2-column ASCII spectra. Same arrays as
+ readsyn                    salvador/spectra_io.py         Read and broaden the grid synthetics. Returns wl_syn, the tuple of broadened spectra and
++reduced_ew                 salvador/summary.py            log(EW / lambda) (EW in mA, lambda in A); 99.99 if the EW is not available or not positive.
+ replace_flag_column        salvador/fit_files.py          Replace the flag (last column) of each data row of a .fit file, in order (salvador-merge).
+ rotation_kernel            salvador/rotation.py           Rotational broadening profile with linear limb darkening (Gray, The Observation and Analysis
+ run                        salvador/cli.py                Analysis of all the stars of the input file (cfg.input_stars): the former main block of
+ run_k2                     salvador/k2_interface.py       Run K2 on ./input.k2. Returns 0 on success, like os.system('k2.py').
+ select_backend             salvador/config.py             Non-interactive matplotlib backend (Agg) for automatic runs (INTER = n). Called by the
+ select_grid_synthetics     salvador/spectra_io.py         Grid synthetics for one line and one set of atmospheric parameters.
++ShiftResult                salvador/fitting.py            Result of template_shift: shift [A] to subtract from the observed wavelengths, its error [A],
++slope_available            salvador/summary.py            True if the COG slope is a number (not 99.999 and not NaN).
+ solar_table_path           salvador/elements.py           The table of solar abundances, solar_abu.txt, installed with salvador (salvador/data/).
+ star_abundance_rows        salvador/summary.py            Rows of abundance_final.txt of one star: [Fe/H] first, then [X/Fe] of the other species
+ star_macroturbulence       salvador/rotation.py           Macroturbulence [km/s] of a star and its uncertainty.
+ stop_run                   salvador/cli.py                Stop the run (exit command 'e', or too many errors): temporary files are removed.
+ strip_ion                  salvador/elements.py           Return the bare element symbol: 'FeII' -> 'Fe', 'FeIII' -> 'Fe', 'Fe' -> 'Fe'.
++template_shift             salvador/fitting.py            Local wavelength shift of an observed line, by fitting a template (NEW 1.4.0).
++use_saturated_species      salvador/summary.py            NEW (1.4.0): the lines rejected only by the slope of the curve of growth (flag -4) are used
+ velocity_grid              salvador/rotation.py           Resample a spectrum on a grid uniform in velocity (log wavelength) with step dv [km/s].
+ vmac_brewer                salvador/rotation.py           Brewer et al. (2016), eq. (2): dwarfs (logg >= 4) 2.202 exp(0.0019 dT) + 1.30, subgiants
+ vmac_carney                salvador/rotation.py           Carney et al. (2008), eq. (5), for red giants: -0.80 logg + 7.33 km/s.
+ vmac_doyle                 salvador/rotation.py           Doyle et al. (2014), eq. (8): 3.21 + 2.33e-3 dT + 2.00e-6 dT^2 - 2.00 (logg - 4.44),
+ vmac_valenti_fischer       salvador/rotation.py           Valenti & Fischer (2005), eq. (1) with the sign of their Fig. 3 and text (vmac increases with
+ VmacRelation               salvador/rotation.py           A macroturbulence relation vmac(Teff, logg) with its calibration range and scatter.
++wavelength_ticks           salvador/plotting.py           Major ticks of the wavelength axis of the main panel, and the step of the minor ticks
+ write_line_result          salvador/cli.py                Write the results of one line, exactly as the former loop did.
+ write_name_syn             salvador/k2_interface.py       Name of a synthetic spectrum in synth_out/, built from all the parameters that define it
+ 
+ Settings and switches:
+-cfg, KEYWORDS, Config, load_config  salvador/config.py    
+-HARMLESS_WARNINGS          salvador/config.py    
+-K2_IN_PROCESS, TRIM_LINELIST, K2_FAST_MODEL_CHECK  salvador/k2_interface.py    
+-GRID_CACHE_SIZE            salvador/spectra_io.py    
+-ABU_KEYS (keywords analysed as abundances)  salvador/line_analysis.py    
++cfg, KEYWORDS, Config, load_config  salvador/config.py
++HARMLESS_WARNINGS, EWR_MAX_DEFAULT  salvador/config.py
++K2_IN_PROCESS, TRIM_LINELIST  salvador/k2_interface.py
++GRID_CACHE_SIZE            salvador/spectra_io.py
++ABU_KEYS (keywords analysed as abundances)  salvador/line_analysis.py
+diff --git a/src/salvador/__init__.py b/src/salvador/__init__.py
+index 3147552..8d570b1 100644
+--- a/src/salvador/__init__.py
++++ b/src/salvador/__init__.py
+@@ -5,4 +5,4 @@ The command line tools are salvador, salvador-merge, salvador-regression and sal
+ The functions are in the modules of this package, one per topic (see salvador.utilities).
+ """
+ 
+-__version__ = '1.3.0'
++__version__ = '1.4.0'
+diff --git a/src/salvador/check_k2_speedup.py b/src/salvador/check_k2_speedup.py
+index 6989609..121b7e6 100755
+--- a/src/salvador/check_k2_speedup.py
++++ b/src/salvador/check_k2_speedup.py
+@@ -8,8 +8,9 @@ salvador-check-k2: check of the K2 speed-up in salvador. Run it in your salvador
+ For each line it computes the same synthetic spectrum and the same equivalent width twice
+ with the real K2:
+   OLD: external 'k2.py' with the full linelist.xkur (as salvador did before)
+-  NEW: in-process K2 with the trimmed linelist and the model check (as salvador does now)
+-then compares spectra (number by number, headers excluded) and EWs, and reports the times.
++  NEW: in-process K2 with the trimmed linelist (as salvador does now)
++then compares spectra (number by number, headers excluded), EWs and COG slopes (1.4.0), and
++reports the times.
+ """
+ import os
+ import sys
+@@ -84,7 +85,7 @@ def main(argv: list[str] | None = None) -> int:
+         print(f'{line:10.3f} A  [{w1}-{w2}]  synthe: old {dt_old:6.2f} s   new {dt_new:6.2f} s   spectra: {diff}')
+         ew_o, de_old = run_eqw(us.K2_LINELIST, line, code, external=True)
+         ew_n, de_new = run_eqw(us.k2_linelist(w1, w2), line, code, external=False)
+-        same_ew = ew_o is not None and ew_n is not None and np.array_equal(ew_o, ew_n)
++        same_ew = ew_o is not None and ew_n is not None and np.array_equal(ew_o, ew_n, equal_nan=True)   # slope may be nan
+         all_ok &= same_ew
+         e_old.append(de_old)
+         e_new.append(de_new)
+@@ -96,7 +97,7 @@ def main(argv: list[str] | None = None) -> int:
+     print(f'\nMean time per synthetic: old {np.mean(t_old):.2f} s, new {np.mean(t_new):.2f} s')
+     print(f'Mean time per EW       : old {np.mean(e_old):.2f} s, new {np.mean(e_new):.2f} s')
+     print('(the first "new" call also imports K2 and indexes the linelists once)')
+-    print('ALL SPECTRA AND EWs IDENTICAL' if all_ok else 'SOME RESULTS DIFFER: send me the output')
++    print('ALL SPECTRA, EWs AND SLOPES IDENTICAL' if all_ok else 'SOME RESULTS DIFFER: send me the output')
+     if os.path.exists('info_ew.txt'):
+         os.remove('info_ew.txt')
+     return 0 if all_ok else 1
+diff --git a/src/salvador/cli.py b/src/salvador/cli.py
+index 5d42175..8699654 100755
+--- a/src/salvador/cli.py
++++ b/src/salvador/cli.py
+@@ -23,15 +23,17 @@ from pypdf import PdfWriter
+ from . import __version__
+ from .config import WORK_DIR, c, cfg, configure_warnings, path_tmp, patterns_to_delete, plt, select_backend
+ from .elements import define_abu0, get_element_symbol, solar_table_path, strip_ion, symbol_map
+-from .fit_files import add_errors_to_file, append_flag_column, check_if_has_data, count_header_cols, read_fit_file
+-from .k2_interface import autok, check_synth_out_linelists, cleanup_linelist_cut
++from .fit_files import (FIT_COLS, add_errors_to_file, append_flag_column, check_if_has_data, count_header_cols,
++                        fit_file_header, read_fit_file)
++from .k2_interface import K2_FORMAT_MESSAGE, K2FormatError, autok, check_synth_out_linelists, cleanup_linelist_cut
+ from .line_analysis import ABU_KEYS, measure_line
+ from .normalization import find_clipped_regions, load_cw_regions
+ from .parallel import cleanup_parallel_work, ensure_models, init_parallel_worker, parallel_available
+ from .plotting import fe_diagnostic_plot
+ from .rotation import check_rotat_settings
+ from .spectra_io import cleaning_tmp_files, model_name_codes, read_spec, select_grid_synthetics
+-from .summary import extract_abu_isor, star_abundance_rows
++from .summary import (FLAG_SLOPE, describe_ew_selection, ew_selection_flag, extract_abu_isor, reduced_ew,
++                      slope_available, star_abundance_rows, use_saturated_species)
+ 
+ ###
+ ### ANALYSIS OF ONE LINE
+@@ -44,12 +46,15 @@ curr_path = Path.cwd()  # working directory of the run (set by run())
+ start_time = time.time()    # start of the run (set by run()): only newer temporary files are deleted
+ MAX_FAILURES = 3    # the run stops after this number of lines in a row stopped by an error
+ 
++
+ def analyse_line(task):
+     """Analysis of one line (see _analyse_line). NEW: an unexpected error stops only this line,
+     which is skipped with a message (before, it stopped the whole run, with all the stars); the
+     run stops after MAX_FAILURES lines in a row stopped by an error (see run)."""
+     try:
+         return _analyse_line(task)
++    except K2FormatError:      # K2 without the COG slope: the whole run stops (see main)
++        raise
+     except Exception as e:     # noqa: BLE001 -- any error of one line; KeyboardInterrupt still stops
+         line = float(task[1])
+         print(f'---\nLine {line:.3f}: the analysis stopped with an error ({type(e).__name__}: {e})')
+@@ -200,11 +205,20 @@ def _analyse_line(task):
+         abu0 = results['abu0']
+         EP = results['EP']
+         loggf = results['loggf']
+-        rec.update(Abu=Abu, ew=ew, emc=emc, EP=EP, loggf=loggf)
+-
+-        ewr = np.log10((max(ew, 1e-9) / 1000) / line)
+-        if Abu != 99.99 and not (cfg.ewr_min <= ewr <= cfg.ewr_max) and not tana.startswith(('ROTAT', 'MOLEC', 'ABU2', 'ISOR')):
+-            rec['flag'] = -1
++        slope = results.get('slope', 99.999)
++        rec.update(Abu=Abu, ew=ew, emc=emc, EP=EP, loggf=loggf, slope=slope, ewr=reduced_ew(ew, line))
++
++        # NEW (1.4.0): selection by the strength of the line: EWR_MIN and the slope of the curve of
++        # growth (COG_SLOPE_MIN, flag -4), or EWR_MIN and EWR_MAX when EWR_MAX is given (flag -1)
++        if Abu != 99.99 and not tana.startswith(('ROTAT', 'MOLEC', 'ABU2', 'ISOR')):
++            ewr_min, ewr_max, slope_min = cfg.ew_selection()
++            flag_ew = ew_selection_flag(ew, line, slope, ewr_min, ewr_max, slope_min)
++            if flag_ew:
++                rec['flag'] = flag_ew
++            if flag_ew == FLAG_SLOPE:
++                print(f'Line {line:.3f}: COG slope {slope:.3f} < COG_SLOPE_MIN = {slope_min:.2f}: not used for the abundances (flag -4)')
++            if slope_min is not None and ew != 99.99 and not slope_available(slope):
++                print(f'Note: line {line:.3f}: K2 gave no COG slope (EW = 0 at A +- 0.1 dex): only the EWR limits are used for this line')
+ 
+         if Abu != 99.99 and not (cfg.ep_min <= EP <= cfg.ep_max) and EP != 99.999 and not tana.startswith(('ROTAT', 'MOLEC', 'ABU2', 'ISOR')):
+             rec['flag'] = -2
+@@ -254,21 +268,26 @@ def _analyse_line(task):
+                 print(f'---\nThe fit with {label} stopped with an error ({type(e).__name__}: {e}): error set to 99.99\n')
+                 return 99.99
+ 
++        # NEW (1.4.0): also for the lines rejected by the COG slope (flag -4): they are used for the
++        # species without other lines (see summary.use_saturated_species), and for the others the
++        # errors show their sensitivity to the parameters
++        computed = rec['flag'] in (0, FLAG_SLOPE)
++
+         ### +T_eff
+         Abu_pT = Abu
+-        if Abu != 99.99 and T_err != 0 and rec['flag'] == 0:
++        if Abu != 99.99 and T_err != 0 and computed:
+             Abu_pT = perturbed_fit(f'Teff + {T_err:.0f} K', int(teff + T_err), logg, vt,
+                                    f"Variation of Teff: \u0394T = {T_err:.0f} [K] \n")
+ 
+         ### +logg: NEW (1.2.0) for every line (before: only ionized species, MOLEC, ABU2 and ISOR)
+         Abu_pg = Abu
+-        if Abu != 99.99 and g_err != 0 and rec['flag'] == 0:
++        if Abu != 99.99 and g_err != 0 and computed:
+             Abu_pg = perturbed_fit(f'logg + {g_err:.2f}', teff, float(logg + g_err), vt,
+                                    '---\nVariation of logg: \u0394logg = %.2f [dex] \n' % (g_err))
+ 
+         ### +vt
+         Abu_pv = Abu
+-        if ew > 50 and Abu!=99.99 and v_err != 0 and rec['flag'] == 0:
++        if ew > 50 and Abu!=99.99 and v_err != 0 and computed:
+             Abu_pv = perturbed_fit(f'vt + {v_err:.2f}', teff, logg, float(vt + v_err),
+                                    '---\nVariation of v_t: \u0394vt = %.2f [km/s] \n' % (v_err))
+ 
+@@ -296,8 +315,13 @@ def write_line_result(rec, abu_file, abu_file_isor, flags, kept):
+     if ans in ['y', 'r'] and not tana.startswith('ROTAT'):
+         Abu, ew, EP, loggf, emc = rec['Abu'], rec['ew'], rec['EP'], rec['loggf'], rec['emc']
+         if tana != 'ISOR':
++            # NEW (1.4.0): EWR and SLOPE (slope of the curve of growth from K2) after EW
++            ewr, slope = rec.get('ewr', 99.99), rec.get('slope', 99.999)
++            ewr_txt = '99.99' if ewr == 99.99 else f"{ewr:.2f}"
++            slope_txt = f"{slope:.3f}" if slope_available(slope) else '99.999'
+             with open(abu_file, 'a') as f:
+-                f.write(f"{name_star:<30}  {line:>8.3f}  {nelem:>5.2f}  {Abu:>5.2f}  {ew:>6.2f}  {EP:>6.3f}  {loggf:>6.3f}  {emc:>5.2f}\n")
++                f.write(f"{name_star:<30}  {line:>8.3f}  {nelem:>5.2f}  {Abu:>5.2f}  {ew:>6.2f}  {ewr_txt:>6}  {slope_txt:>6}  "
++                        f"{EP:>6.3f}  {loggf:>6.3f}  {emc:>5.2f}\n")
+         elif tana == 'ISOR':
+             with open(abu_file_isor, 'a') as f:
+                 f.write(f"{name_star:<30}  {line:>8.3f}  {nelem:>5.2f}  {_isor_txt(Abu, 5)}  {_isor_txt(emc, 3)}\n")
+@@ -332,7 +356,7 @@ def write_line_result(rec, abu_file, abu_file_isor, flags, kept):
+         new_headers = ["d_Teff", "d_logg", " d_vt"]
+         # FIX: only in the file where this line was written (before: also the last row of the other file)
+         if tana != 'ISOR':
+-            add_errors_to_file(abu_file, new_headers, 8, f"{delta_pT:>5.2f}", f"{delta_pg:>5.2f}", f"{delta_pv:>5.2f}")
++            add_errors_to_file(abu_file, new_headers, len(FIT_COLS), f"{delta_pT:>5.2f}", f"{delta_pg:>5.2f}", f"{delta_pv:>5.2f}")
+         else:
+             add_errors_to_file(abu_file_isor, new_headers, 5, _isor_txt(delta_pT, 6), _isor_txt(delta_pg, 5), _isor_txt(delta_pv, 4))
+ 
+@@ -428,6 +452,9 @@ def run() -> None:
+     print("")
+     print("#########################################################")
+ 
++    print('')
++    # NEW (1.4.0): how the lines are selected by their strength
++    print('Selection of the lines by their strength: ' + describe_ew_selection(*cfg.ew_selection()))
+     print('')
+ 
+     ###
+@@ -582,13 +609,7 @@ def run() -> None:
+ 
+         abu_file = name_star+'.fit'
+         with open(abu_file,'w') as f:
+-            f.write('#   FLAG =  1  (USED LINE)\n')
+-            f.write('#   FLAG =  0  (REJ. SIGMA-CLIPPING)\n')
+-            f.write('#   FLAG = -1  (REJ. EW)\n')
+-            f.write('#   FLAG = -2  (REJ. E.P.)\n')
+-            f.write('#   FLAG = -3  (REJ. ABU)\n')
+-            f.write('#' + '-'*39 + '\n')
+-            f.write('#SPECTRUM                           LINE   ELEM    ABU      EW      EP  log_gf    eMC\n')
++            f.write(fit_file_header(describe_ew_selection(*cfg.ew_selection())))
+ 
+         # star_rot.fit is created at the first ROTAT line; remove the one of a previous run
+         if os.path.exists(name_star + '_rot.fit'):
+@@ -634,7 +655,7 @@ def run() -> None:
+ 
+         col_names_err = ['abu_pT', 'abu_pg', 'abu_pv']
+         col_names_base_isor = ['ID', 'line', 'nelem', 'abu', 'abu_mc']
+-        col_names_base = ['ID', 'line', 'nelem', 'abu', 'ew', 'EP', 'loggf', 'abu_mc']
++        col_names_base = list(FIT_COLS)
+ 
+         ### star-level data used by analyse_line (inherited by the parallel workers)
+         STAR.update(wv=wv, fl=fl, teff=teff, logg=logg, met=met, alpha=alpha, vt=vt,
+@@ -730,6 +751,7 @@ def run() -> None:
+         # CREATION OF ABUNDANCE_FINAL.TXT FROM ABU_FILE
+         if check_if_has_data(abu_file, '#SPECTRUM'):
+             ID, nelem, abu, abu_mc, other_nelems, df = read_fit_file(count_header_cols(abu_file), col_names_base, col_names_err, abu_file)  # FIX: column count from the file header
++            flag_line = use_saturated_species(nelem, flag_line, label=name_star)      # NEW (1.4.0)
+             param_errors = (df['abu_pT'].values, df['abu_pg'].values, df['abu_pv'].values) if 'abu_pT' in df.columns else None
+             # rows of [Fe/H] and [X/Fe] (same function as salvador-merge); without Fe I lines the
+             # [M/H] of the model is used as [Fe/H]
+@@ -750,7 +772,7 @@ def run() -> None:
+             # Fe I abundances against wavelength, excitation potential and reduced EW (same function
+             # as salvador-merge); not with a grid of synthetics (no EP)
+             if cfg.grid == 'n':
+-                fe_diagnostic_plot(abu_file, name_star + '_tmp.pdf', ewr_range=(cfg.ewr_min, cfg.ewr_max))
++                fe_diagnostic_plot(abu_file, name_star + '_tmp.pdf', ewr_range=cfg.ew_selection()[:2])
+ 
+             # --- 1. File names ---
+             # The file just saved
+@@ -894,7 +916,10 @@ def main(argv: list[str] | None = None) -> int:
+     cfg.load(args.input)
+     configure_warnings()
+     select_backend(cfg.inter)
+-    run()
++    try:
++        run()
++    except K2FormatError:
++        stop_run(K2_FORMAT_MESSAGE)     # K2 without the slope of the curve of growth (1.4.0)
+     return 0
+ 
+ 
+diff --git a/src/salvador/config.py b/src/salvador/config.py
+index 48c16b2..bacafd9 100644
+--- a/src/salvador/config.py
++++ b/src/salvador/config.py
+@@ -44,6 +44,12 @@ def configure_warnings() -> None:
+ 
+ # --------------- important values
+ c = 299792.458  # speed of light in km/s
++# NEW (1.4.0): largest reduced EW, log(EW/lambda), of the lines used for the abundances when
++# EWR_MAX is not given in input.salvador. With the COG slope (COG_SLOPE_MIN) it only removes the
++# very strong lines, whose slope rises again in the damping part of the curve of growth (S = 0.4-0.5
++# at EW ~ 450-700 mA); with a grid of synthetics (PATH_SYN: no slope) it is the EWR_MAX used.
++# Change this value to change that limit.
++EWR_MAX_DEFAULT = -4.4
+ ksize = 101 # kernel size for the median filter used to find the continuum points in the spectrum.
+ init_ans = 'zzz'
+ 
+@@ -68,7 +74,8 @@ KEYWORDS = {
+     'LIMIT_ABU':    ('limit_abu',      int,   3),       # automatic mode: max variation [+-dex] before skipping a line
+     'CALC_BEST':    ('calc_best',      str,   'y'),     # y = compute the +-0.2 dex synthetics for the plot
+     'EWR_MIN':      ('ewr_min',        float, -6.0),    # minimum reduced EW, log(EW/lambda)
+-    'EWR_MAX':      ('ewr_max',        float, -4.4),    # maximum reduced EW
++    'EWR_MAX':      ('ewr_max',        float, None),    # maximum reduced EW; if given, it replaces COG_SLOPE_MIN (1.4.0)
++    'COG_SLOPE_MIN': ('cog_slope_min', float, 0.35),    # minimum slope of the curve of growth (K2), when EWR_MAX is not given
+     'EP_MIN':       ('ep_min',         float, 0.0),     # minimum excitation potential [eV]
+     'EP_MAX':       ('ep_max',         float, 10.0),    # maximum excitation potential [eV]
+     'VERBOSE':      ('verbose',        int,   0),       # 0 or 1
+@@ -101,7 +108,8 @@ class Config:
+     limit_abu: int = 3
+     calc_best: str = 'y'
+     ewr_min: float = -6.0
+-    ewr_max: float = -4.4
++    ewr_max: Optional[float] = None
++    cog_slope_min: float = 0.35
+     ep_min: float = 0.0
+     ep_max: float = 10.0
+     verbose: int = 0
+@@ -129,6 +137,20 @@ class Config:
+         """Iterations of the automatic mode allowed by LIMIT_ABU (default +-3 dex = 11 iterations)."""
+         return (self.limit_abu * 5) - 4
+ 
++    def ew_selection(self) -> tuple[float, float, Optional[float]]:
++        """Limits of the selection of the lines by their strength (see summary.ew_selection_flag):
++        (minimum EWR, maximum EWR, minimum COG slope or None).
++
++        NEW (1.4.0): EWR_MAX given -> EWR_MIN and EWR_MAX, the slope is not used; otherwise
++        EWR_MIN, COG_SLOPE_MIN and EWR_MAX_DEFAULT (only against the very strong lines). With a grid
++        of synthetics (no slope): EWR_MIN and EWR_MAX (EWR_MAX_DEFAULT if not given).
++        """
++        if self.ewr_max is not None:
++            return self.ewr_min, self.ewr_max, None
++        if self.grid == 'y':
++            return self.ewr_min, EWR_MAX_DEFAULT, None
++        return self.ewr_min, EWR_MAX_DEFAULT, self.cog_slope_min
++
+ 
+ VMAC_NAMES = ('VF05', 'D14', 'B16', 'C08')     # relations of rotation.VMAC_RELATIONS
+ 
+@@ -174,7 +196,7 @@ def load_config(path='input.salvador'):
+     values = {}
+     for key, (field, convert, default) in KEYWORDS.items():
+         if key not in raw:
+-            if default is None and key not in ('PATH_SYN', 'ROT_VMAC', 'ROT_VMAC_ERR'):    # optional, default None
++            if default is None and key not in ('PATH_SYN', 'ROT_VMAC', 'ROT_VMAC_ERR', 'EWR_MAX'):    # optional, default None
+                 sys.exit(f"Error: mandatory keyword '{key}' not found in {path}!")
+             values[field] = default
+             continue
+@@ -204,6 +226,10 @@ def load_config(path='input.salvador'):
+         sys.exit(f"Error: ROT_UL_FWHM cannot be negative in {path} (found {cfg.rot_ul_fwhm})")
+     if cfg.rot_step <= 0:
+         sys.exit(f"Error: ROT_STEP must be positive in {path} (found {cfg.rot_step})")
++    if cfg.cog_slope_min < 0:
++        sys.exit(f"Error: COG_SLOPE_MIN cannot be negative in {path} (found {cfg.cog_slope_min})")
++    if cfg.ewr_max is not None and cfg.ewr_max <= cfg.ewr_min:
++        sys.exit(f"Error: EWR_MAX ({cfg.ewr_max}) must be larger than EWR_MIN ({cfg.ewr_min}) in {path}")
+     return cfg
+ 
+ 
+diff --git a/src/salvador/fit_files.py b/src/salvador/fit_files.py
+index bf5a4c0..76146b9 100644
+--- a/src/salvador/fit_files.py
++++ b/src/salvador/fit_files.py
+@@ -1,7 +1,101 @@
+-"""The .fit result files: error columns, flags, headers, reading them back."""
++"""The .fit result files: header, error columns, flags, reading them back (also by the names of
++the header, for the files of any version: read_fit_table)."""
+ import numpy as np
+ import pandas as pd
+ 
++# columns of the .fit file (names used when it is read back; with the parameter errors they are
++# followed by abu_pT, abu_pg, abu_pv). NEW (1.4.0): ewr and slope.
++FIT_COLS = ('ID', 'line', 'nelem', 'abu', 'ew', 'ewr', 'slope', 'EP', 'loggf', 'abu_mc')
++FIT_HEADER_NAMES = '#SPECTRUM                           LINE   ELEM    ABU      EW     EWR   SLOPE      EP  log_gf    eMC'
++
++
++def fit_file_header(selection: str) -> str:
++    """Header of the .fit file: meaning of the flags, selection of the lines by their strength
++    (NEW 1.4.0, e.g. from summary.describe_ew_selection) and the names of the columns."""
++    return ('#   FLAG =  1  (USED LINE)\n'
++            '#   FLAG =  0  (REJ. SIGMA-CLIPPING)\n'
++            '#   FLAG = -1  (REJ. EW)\n'
++            '#   FLAG = -2  (REJ. E.P.)\n'
++            '#   FLAG = -3  (REJ. ABU)\n'
++            '#   FLAG = -4  (REJ. COG SLOPE)\n'
++            f'#   SELECTION: {selection}\n'
++            '#   EWR = log(EW/lambda); SLOPE = d log(EW/lambda) / d A(X) from K2 (99.999 = not available)\n'
++            '#' + '-' * 39 + '\n'
++            + FIT_HEADER_NAMES + '\n')
++
++
++# names of the header of the .fit files (all versions) -> names of the columns in salvador
++HEADER_TO_COL = {'SPECTRUM': 'ID', 'LINE': 'line', 'ELEM': 'nelem', 'ABU': 'abu', 'EW': 'ew', 'EWR': 'ewr',
++                 'SLOPE': 'slope', 'EP': 'EP', 'log_gf': 'loggf', 'eMC': 'abu_mc',
++                 'd_Teff': 'abu_pT', 'd_logg': 'abu_pg', 'd_vt': 'abu_pv', 'flag_line': 'flag'}
++OLD_FIT_COLS = ('ID', 'line', 'nelem', 'abu', 'ew', 'EP', 'loggf', 'abu_mc')     # before 1.4.0
++ERR_COLS = ('abu_pT', 'abu_pg', 'abu_pv')
++MISSING_ERRORS = ('99.99', '99.99', '99.99')
++
++
++def read_fit_rows(fit_file) -> tuple[list[dict[str, str]], bool]:
++    """Rows of a .fit file of ANY version of salvador, as text, with the columns of this version:
++    FIT_COLS, the three parameter errors and the flag. NEW (1.4.0): the columns are found from the
++    names of the #SPECTRUM header (before, from their position), so the files written before 1.4.0
++    (without EWR and SLOPE) can be read and merged with the new ones. Missing values: EWR computed
++    from EW (99.99 if not available), SLOPE 99.999, errors 99.99, flag 0.
++
++    A data row may have, after the base columns, 3 errors and the flag, only the errors, only the
++    flag, or nothing (e.g. rejected lines of the interactive mode before 1.1.0). A row that does
++    not fit is skipped with a message.
++
++    Returns:
++        (rows, True if the header has the parameter errors). ([], False) if the file is missing.
++    """
++    try:
++        with open(fit_file) as f:
++            lines = f.readlines()
++    except OSError:
++        print(f"Attention: File {fit_file} not found.")
++        return [], False
++    header = next((r for r in lines if r.startswith('#SPECTRUM')), None)
++    names = [HEADER_TO_COL.get(tok, tok) for tok in header.replace('#', ' ').split()] if header else list(OLD_FIT_COLS)
++    base = names[:names.index('abu_mc') + 1] if 'abu_mc' in names else list(OLD_FIT_COLS)
++    has_errors = 'abu_pT' in names
++    rows = []
++    for k, line in enumerate(lines, 1):
++        if not line.strip() or line.lstrip().startswith('#'):
++            continue
++        fields = line.split()
++        extra = len(fields) - len(base)
++        if extra not in (0, 1, 3, 4):
++            print(f"Attention: row {k} of {fit_file} has {len(fields)} columns: skipped")
++            continue
++        row = dict(zip(base, fields[:len(base)]))
++        errors = fields[len(base):len(base) + 3] if extra >= 3 else list(MISSING_ERRORS)
++        row.update(zip(ERR_COLS, errors))
++        row['flag'] = fields[-1] if extra in (1, 4) else '0'
++        if 'ewr' not in row:
++            from .summary import reduced_ew
++            try:
++                ewr = reduced_ew(float(row['ew']), float(row['line']))
++            except (KeyError, ValueError):
++                ewr = 99.99
++            row['ewr'] = '99.99' if ewr == 99.99 else f'{ewr:.2f}'
++        row.setdefault('slope', '99.999')
++        rows.append({col: row[col] for col in FIT_COLS + ERR_COLS + ('flag',)})
++    return rows, has_errors
++
++
++def read_fit_table(fit_file) -> pd.DataFrame:
++    """A .fit file of any version (see read_fit_rows) as a DataFrame with the columns FIT_COLS, the
++    parameter errors and the flag (numbers as float, the flag as int). Empty if there are no rows."""
++    rows, _ = read_fit_rows(fit_file)
++    columns = list(FIT_COLS + ERR_COLS + ('flag',))
++    df = pd.DataFrame(rows, columns=columns)
++    if df.empty:
++        return df
++    for col in columns[1:]:
++        df[col] = df[col].astype(float)
++    df['flag'] = df['flag'].astype(int)
++    return df
++
++
+ def add_errors_to_file(abu_file, new_headers, len_cols, delta_pT, delta_pg, delta_pv):
+     """Add the three errors due to the parameters (d_Teff, d_logg, d_vt) to the LAST row of a .fit
+     file, and their names to its #SPECTRUM header (only once). The row is changed only if it has
+diff --git a/src/salvador/fitting.py b/src/salvador/fitting.py
+index e327679..0c090be 100644
+--- a/src/salvador/fitting.py
++++ b/src/salvador/fitting.py
+@@ -2,6 +2,7 @@
+ import warnings
+ import zlib
+ from collections.abc import Sequence
++from dataclasses import dataclass
+ import numpy as np
+ import pandas as pd
+ from scipy.integrate import trapezoid
+@@ -84,6 +85,69 @@ def fwhm_empirica(wvl_fit, flux_fit):
+ 
+     return fwhm_measured, center_measured
+ 
++@dataclass
++class ShiftResult:
++    """Result of template_shift: shift [A] to subtract from the observed wavelengths, its error [A],
++    the depth of the line in units of the noise, and whether it can be applied (reason if not)."""
++    shift: float
++    error: float
++    depth_snr: float
++    ok: bool
++    reason: str = ''
++
++
++def template_shift(wave: np.ndarray, flux: np.ndarray, wave_t: np.ndarray, flux_t: np.ndarray,
++                   lo: float, hi: float, max_shift: float, pixel: float, step_pix: float = 0.02,
++                   min_depth_snr: float = 3.0) -> ShiftResult:
++    """Local wavelength shift of an observed line, by fitting a template (NEW 1.4.0).
++
++    The observed pixels between lo and hi are fitted with c + a * (T(lambda - d) - 1), where T is
++    the broadened synthetic spectrum (it contains the blends and the hyperfine/isotopic structure
++    of the line), c (continuum level) and a (depth scale) are free (linear least squares) and d is
++    scanned from -(max_shift + 0.5 pixel) to +(max_shift + 0.5 pixel) in steps of step_pix pixels.
++    The minimum of the chi2 is refined with a parabola; its error is the shift where the chi2 grows
++    by the variance of the residuals (Delta chi2 = 1). The shift is applied only if the minimum is
++    inside the scanned range and within max_shift, and the line is detected (a > 0 and depth of the
++    fitted line > min_depth_snr times the noise).
++
++    Args:
++        wave, flux: Observed (normalized) spectrum.
++        wave_t, flux_t: Template (broadened synthetic spectrum).
++        lo, hi: Region of the fit [A].
++        max_shift: Largest shift that can be applied [A] (NPIX_RV pixels).
++        pixel: Pixel step of the observed spectrum [A].
++    """
++    mask = (wave >= lo) & (wave <= hi)
++    x, y = np.asarray(wave, float)[mask], np.asarray(flux, float)[mask]
++    if x.size < 5 or pixel <= 0:
++        return ShiftResult(0.0, 0.0, 0.0, False, 'too few pixels')
++    wave_t, flux_t = np.asarray(wave_t, float), np.asarray(flux_t, float)
++    span = max_shift + 0.5 * pixel
++    shifts = np.arange(-span, span + 0.5 * step_pix * pixel, step_pix * pixel)
++    chi2, coefs = np.empty(shifts.size), []
++    for k, d in enumerate(shifts):
++        design = np.c_[np.ones_like(x), np.interp(x - d, wave_t, flux_t) - 1.0]
++        coef, *_ = np.linalg.lstsq(design, y, rcond=None)
++        chi2[k] = np.sum((y - design @ coef) ** 2)
++        coefs.append(coef)
++    k = int(np.argmin(chi2))
++    a = coefs[k][1]
++    sigma2 = chi2[k] / max(x.size - 3, 1)                       # variance of the residuals
++    depth = a * (1.0 - np.min(np.interp(x - shifts[k], wave_t, flux_t)))
++    depth_snr = depth / np.sqrt(sigma2) if sigma2 > 0 else np.inf
++    if k in (0, shifts.size - 1):
++        return ShiftResult(shifts[k], np.inf, depth_snr, False, 'no minimum within the allowed shift')
++    c_m, c_0, c_p = chi2[k - 1], chi2[k], chi2[k + 1]
++    curvature = (c_m - 2 * c_0 + c_p) / (shifts[1] - shifts[0]) ** 2       # d2 chi2 / d shift2
++    shift = shifts[k] + (0.5 * (c_m - c_p) / (c_m - 2 * c_0 + c_p) * (shifts[1] - shifts[0]) if curvature > 0 else 0.0)
++    error = float(np.sqrt(2 * sigma2 / curvature)) if curvature > 0 else np.inf
++    if a <= 0 or depth_snr < min_depth_snr:
++        return ShiftResult(shift, error, depth_snr, False, f'line not detected (depth = {depth_snr:.1f} x noise)')
++    if abs(shift) > max_shift:
++        return ShiftResult(shift, error, depth_snr, False, 'shift larger than NPIX_RV')
++    return ShiftResult(float(shift), error, float(depth_snr), True)
++
++
+ def new_res_est(wvl, flux, line, resol, fit1, fit2, tana):
+     """Measure the observed line between fit1 and fit2: FWHM, center and area, each the mean of a
+     Gaussian fit and of the empirical profile. Returns (resolution = center/FWHM, FWHM, center,
+diff --git a/src/salvador/k2_interface.py b/src/salvador/k2_interface.py
+index 90e8b0f..fcedd51 100644
+--- a/src/salvador/k2_interface.py
++++ b/src/salvador/k2_interface.py
+@@ -1,6 +1,9 @@
+ """Everything that talks to K2: running it (in-process), synthetic spectra (autok), equivalent widths
+-(eqw_k2), trimmed linelists, the model-atmosphere check, abundance-variation (DELTA) files and the
+-names of the synthetic spectra. The switches K2_IN_PROCESS, TRIM_LINELIST and K2_FAST_MODEL_CHECK are here."""
++and slopes of the curve of growth (eqw_k2), trimmed linelists, abundance-variation (DELTA) files and
++the names of the synthetic spectra. The switches K2_IN_PROCESS and TRIM_LINELIST are here.
++
++salvador 1.4.0 needs the version of K2 of November 2026 (or later), whose eqw writes the slope of
++the curve of growth in info_ew.txt (5 columns)."""
+ import importlib
+ import json
+ import os
+@@ -33,7 +36,8 @@ from .spectra_io import model_name_codes, read_two_columns
+ ###    passed unchanged (no cut). Set TRIM_LINELIST = False to use linelist.xkur as before.
+ K2_IN_PROCESS = True
+ TRIM_LINELIST = True
+-K2_FAST_MODEL_CHECK = True      # see _install_k2_model_check below
++# 1.4.0: the shortcut K2_FAST_MODEL_CHECK (a wrapper of K2's RunAtlas9.atlas9 that checked whether
++# the model atmosphere exists before the ODF interpolation) was removed: K2 now does it itself.
+ K2_LINELIST = str(BASE_DIR / 'linelist.xkur')
+ LINELIST_MARGIN_A = 50.0
+ LINELIST_CUT_DIR = Path('linelist_cut')
+@@ -59,11 +63,6 @@ def run_k2():
+         except Exception as e:
+             print(f'Warning: cannot import K2 ({e}). Using the external call k2.py')
+             K2_IN_PROCESS = False
+-        if K2_IN_PROCESS and K2_FAST_MODEL_CHECK:
+-            try:
+-                _install_k2_model_check()
+-            except Exception as e:      # only the shortcut is lost, K2 still runs in-process
+-                print(f'Warning: K2 model check not installed ({type(e).__name__}: {e})')
+ 
+     if not K2_IN_PROCESS:
+         return os.system('k2.py')
+@@ -104,59 +103,20 @@ def run_k2():
+             plt.ion()
+ 
+ 
+-def _install_k2_model_check():
+-    """SPEED: in K2's RunAtlas9.atlas9(), the ODFs and Rosseland tables are interpolated for a
+-    [M/H] that is not a grid value (interpol_odf.exe, ~0.26 s per call) BEFORE checking whether the
+-    model atmosphere already exists; when it exists the interpolation is thrown away. Since K2 runs
+-    in this process, this wrapper does the existence check first, with K2's own naming method and
+-    the same directory rule, and does what K2 does in that case (copy the model to
+-    guess_model_4other.dat and return 1). In every other case K2's original method runs unchanged.
+-    The skipped steps only prepare files for an ATLAS9 run (interpol.*, guess_model_4atlas9.dat)
+-    and erase fort.* files, which synthe() erases anyway before SYNTHE. No K2 file is modified."""
+-    import atlas9 as k2_atlas9
+-    from path import path_model
+-    original = k2_atlas9.RunAtlas9.atlas9
+-    if getattr(original, '_salvador_model_check', False):
+-        return
+-
+-    def atlas9(self, pset, ross_set, name):
+-        """Wrapper of K2's RunAtlas9.atlas9: if the model atmosphere already exists, copy it as K2 does and
+-        skip the ODF interpolation; otherwise run K2's original method (see _install_k2_model_check)."""
+-        if len(pset) == 5 and self.checkmod == 1:
+-            try:
+-                path0, strname = path_model().path1(pset[3])[4:6]
+-                name_mod = self.name_model(pset, strname, 1) if name == '*' else name
+-                if self.moddir == '@#@':
+-                    where = path0 + '/models-new/'
+-                elif self.moddir == '.':
+-                    where = './'
+-                else:
+-                    where = str(self.moddir) + '/'
+-                outmod = where + name_mod + '.dat'
+-                if os.path.exists(outmod):
+-                    if self.verbose > 0:
+-                        print('Model atmosphere already exists')
+-                    shutil.copyfile(outmod, 'guess_model_4other.dat')   # FIX: safe with spaces in the paths
+-                    return 1
+-            except Exception:
+-                pass                # anything unexpected: K2 decides, as before
+-        return original(self, pset, ross_set, name)
+-
+-    atlas9._salvador_model_check = True
+-    k2_atlas9.RunAtlas9.atlas9 = atlas9
+-
+-
+ def _parse_k2_linelist(path):
+     """Sections of a K2 linelist file, read as K2 does (first token of each line):
+-    [(marker, [file, ...]), ...]."""
++    [(marker, [file, ...]), ...]. As in K2, the markers are recognised in upper or lower case and
++    the other lines starting with '#' are comments (FIX 1.4.0: before, they were taken as files)."""
+     sections = []
+     with open(path, 'r') as f:
+         for row in f:
+             tok = row.split()
+             if not tok:
+                 continue
+-            if tok[0] in _K2_MARKERS:
+-                sections.append((tok[0], []))
++            if tok[0].upper() in _K2_MARKERS:
++                sections.append((tok[0].upper(), []))
++            elif tok[0].startswith('#'):
++                continue
+             elif sections:
+                 sections[-1][1].append(tok[0])
+     return sections
+@@ -612,9 +572,41 @@ def autok(param1, delta, window):
+ 
+     return xs, ys0
+ 
++class K2FormatError(RuntimeError):
++    """The EW file of K2 (info_ew.txt) has no slope of the curve of growth: K2 is older than the
++    version salvador needs. It stops the run (it is not handled as an error of one line)."""
++
++
++K2_FORMAT_MESSAGE = 'salvador needs EW file with the COG slope'
++
++
++def read_info_ew(path: str | Path = 'info_ew.txt') -> tuple[float, float, float, float]:
++    """EW [mA], EP [eV], log gf and slope of the curve of growth from the EW file of K2.
++
++    The file has one row: wavelength, EW, EP, log gf, slope (NEW in K2: 'nan' when K2 cannot
++    compute the slope, which is returned as 99.999).
++
++    Raises:
++        K2FormatError: the row has 4 values (K2 without the slope).
++        ValueError: the row cannot be read.
++    """
++    fields = Path(path).read_text().split()
++    if len(fields) == 4:
++        raise K2FormatError(K2_FORMAT_MESSAGE)
++    if len(fields) != 5:
++        raise ValueError(f'{len(fields)} values instead of 5')
++    _, ew, ep, loggf, slope = (float(x) for x in fields)
++    return ew, ep, loggf, (slope if np.isfinite(slope) else 99.999)
++
++
+ def eqw_k2(param1, delta, window):
+     """Equivalent width of the line computed by K2 (eqw; eqwb for ABUF) with the abundance changed by
+-    delta. Returns (EW [mA], EP [eV], log gf); 99.99, 99.999, 99.999 if K2 gives no result."""
++    delta, and the slope of the curve of growth at that abundance (computed by K2 with A +- 0.1 dex).
++    Returns (EW [mA], EP [eV], log gf, slope); 99.99, 99.999, 99.999, 99.999 if K2 gives no result.
++
++    Raises:
++        K2FormatError: K2 wrote the EW file without the slope (K2 older than salvador 1.4.0 needs).
++    """
+     teff = int(param1['teff'])
+     logg = float(param1['logg'])
+     metal = float(param1['met'])
+@@ -653,13 +645,13 @@ def eqw_k2(param1, delta, window):
+ 
+     if exit_code == 0:
+         try:
+-            wave, ew_k2, EP, loggf = np.loadtxt('info_ew.txt', unpack=True)
+-            print('EW = %.2f mA' % ew_k2, '\n')
+-        except (FileNotFoundError, IOError, ValueError) as e:
+-            print(f'Warning: the EW of K2 could not be read ({type(e).__name__}): EW set to 99.99')
+-            ew_k2, EP, loggf = 99.99, 99.999, 99.999
++            ew_k2, EP, loggf, slope = read_info_ew('info_ew.txt')
++            print('EW = %.2f mA' % ew_k2, ('  COG slope = %.3f' % slope) if slope != 99.999 else '  COG slope not available', '\n')
++        except (OSError, ValueError) as e:
++            print(f'Warning: the EW of K2 could not be read ({type(e).__name__}: {e}): EW set to 99.99')
++            ew_k2, EP, loggf, slope = 99.99, 99.999, 99.999, 99.999
+     else:
+         print('Warning: eqw of k2 did not calculate the EW!!!')
+-        ew_k2, EP, loggf = 99.99, 99.999, 99.999
++        ew_k2, EP, loggf, slope = 99.99, 99.999, 99.999, 99.999
+ 
+-    return ew_k2, EP, loggf
++    return ew_k2, EP, loggf, slope
+diff --git a/src/salvador/line_analysis.py b/src/salvador/line_analysis.py
+index 9bcf943..9b09a25 100644
+--- a/src/salvador/line_analysis.py
++++ b/src/salvador/line_analysis.py
+@@ -10,7 +10,7 @@ from .elements import abu_absolute, define_abu0
+ from .k2_interface import autok, eqw_k2
+ from .spectra_io import readsyn
+ from .normalization import find_clipped_regions, norm1, norm2, norm3
+-from .fitting import abu_determination, abu_mc_line, convolve_gauss, convolve_gauss2, mc_seed, new_res_est
++from .fitting import abu_determination, abu_mc_line, convolve_gauss, convolve_gauss2, mc_seed, new_res_est, template_shift
+ from .rotation import analysis_rotat
+ from .plotting import NullPlotter, PlotManager
+ 
+@@ -19,7 +19,8 @@ ABU_KEYS = ('ABU', 'ABU2', 'MOLEC', 'ABU_GF', 'ABUF', 'ISOR')
+ 
+ def _rejected_result():
+     """Result of a line that could not be measured (out of limit, or no usable synthetics)."""
+-    return {"abu_fin": 99.99, "answer": 'y', "ew_k2": 99.99, "snr": 0, "abu_err_mc": 99.99, "abu0": 99.99, "EP": 99.999, "loggf": 99.999}
++    return {"abu_fin": 99.99, "answer": 'y', "ew_k2": 99.99, "snr": 0, "abu_err_mc": 99.99, "abu0": 99.99, "EP": 99.999, "loggf": 99.999,
++            "slope": 99.999}
+ 
+ def _at_grid_edge(abu_fin: float, abu, chi, tana: str) -> bool:
+     """True if the chi2 minimum is at the first or the last abundance of the grid of synthetic
+@@ -237,52 +238,44 @@ def measure_line(wvl, flux, sss, fit1, fit2, elem, param1, name_star, abu, wv_le
+         flux = norm3(wvl, flux, wl_syn_tmp.value, fl_syn_tmp.value)
+ 
+ 
+-    ### local correction for RV according to the wave of minimum flux on the spectrum
++    ### measure of the observed line: FWHM (AUTO_RES), area (first synthetics)
+     newr, fwhm_obs, pos_line, area_line = new_res_est(wvl, flux, line, resol, fit1, fit2, tana)
+ 
+-    # 1.5 FWHM left and 1.5 FWHM right = 3 FWHM total
+-    wvl_start = line - (1.5 * fwhm_obs)
+-    wvl_end = line + (1.5 * fwhm_obs)
+-
+-    # Let's create a mask to take only the pixels inside this region
+-    mask_3fwhm = (wvl >= wvl_start) & (wvl <= wvl_end)
+-    wvl_region = wvl[mask_3fwhm]
+-
+-    # We calculate the pixel step if there are enough pixels in the region
+-    if len(wvl_region) > 1:
+-        pixel_step = np.mean(np.diff(wvl_region))
+-        pixel_per_fwhm = fwhm_obs / pixel_step
+-
+-        if cfg.verbose == 1:
+-            print(f"\n--- Local RV correction for line {line} A ---")
+-            print(f"Average pixel step in region 3 FWHM: {pixel_step: .4f} A/pixel")
+-
+-        if pixel_per_fwhm < 2.0:
+-            print("WARNING: The line is not correctly sampled.")
+-
+-    else:
+-        print("Error: No pixels found in the specified region. Please check your data or FWHM value.")
+-        pixel_step = 0.0
+-
+-    # tolerance from number of pixels to range in Ångstrom
+-    tol_wv = cfg.n_pix_rv * pixel_step
+-
+-    # Let's calculate the shift (distance between the measured centroid and the laboratory value)
+-    delta_wv = pos_line - line
+-    if abs(delta_wv) < tol_wv:
+-        wvl = wvl - delta_wv
+-        if cfg.verbose == 1:
+-            print(f"Spectrum realigned! Shifted by {-delta_wv:.4f} A ({abs(delta_wv)/pixel_step:.2f} pixels)\n")
+-    else:
+-        if cfg.verbose == 1:
+-            print(f"Shift too large ({abs(delta_wv):.4f} A = {abs(delta_wv)/pixel_step:.1f} pixels). "
+-            f"Exceeds threshold of {cfg.n_pix_rv} pixels. Spectrum has NOT been modified.\n")
++    ### NEW (1.4.0): local RV correction (NPIX_RV) by fitting the broadened synthetic spectrum of the
++    ### starting abundance to the observed line (see fitting.template_shift). Before, the centre of the
++    ### observed line (Gaussian fit and half depth) was compared with the laboratory wavelength: it
++    ### failed with blends, weak lines and asymmetric profiles (hyperfine/isotopic structure), and an
++    ### unreliable shift was applied anyway when it was within NPIX_RV.
++    grid_syn = readsyn(sss, resol, line) if cfg.grid == 'y' else None     # read once (also used below)
++    near = (wvl >= line - 1.5 * fwhm_obs) & (wvl <= line + 1.5 * fwhm_obs)
++    pixel_step = float(np.mean(np.diff(wvl[near]))) if np.count_nonzero(near) > 1 else float(np.median(np.diff(wvl)))
++    if fwhm_obs / pixel_step < 2.0:
++        print("WARNING: The line is not correctly sampled.")
++    if cfg.n_pix_rv > 0 and tana != 'ABU2':
++        if cfg.grid == 'y':
++            wl_tmpl, fl_tmpl = (grid_syn[0].value, grid_syn[1][len(grid_syn[1]) // 2].value) if grid_syn[1] else (None, None)
++        else:
++            wl_tmpl, fl_tmpl = autok(param1, delta, window)
++            fl_tmpl = getattr(convolve_gauss2(wl_tmpl, fl_tmpl, resol), 'value', None)
++            wl_tmpl = getattr(wl_tmpl, 'value', wl_tmpl)
++        if fl_tmpl is not None:
++            fwhm_syn = line / resol
++            rv = template_shift(wvl, flux, wl_tmpl, fl_tmpl, fit1 - fwhm_syn, fit2 + fwhm_syn,
++                                cfg.n_pix_rv * pixel_step, pixel_step)
++            if rv.ok:
++                wvl = wvl - rv.shift
++                if cfg.verbose == 1:
++                    print(f"Local RV correction of line {line}: shifted by {-rv.shift:.4f} A "
++                          f"({-rv.shift / pixel_step:+.2f} +- {rv.error / pixel_step:.2f} pixels)\n")
++            else:
++                print(f"Local RV correction of line {line} not applied: {rv.reason} "
++                      f"(best shift {-rv.shift / pixel_step:+.2f} pixels, NPIX_RV = {cfg.n_pix_rv})\n")
+ 
+ 
+     ###  syn
+     if cfg.grid == 'y':
+         abu = abu_absolute(elem, abu, met)
+-        wl_syn, fl_syn_br, used = readsyn(sss, resol, line)
++        wl_syn, fl_syn_br, used = grid_syn
+         # FIX: keep names and abundances aligned with the spectra actually read
+         sss, abu = [sss[k] for k in used], np.asarray(abu)[used]
+         if len(used) < 2:
+@@ -414,10 +407,15 @@ def measure_line(wvl, flux, sss, fit1, fit2, elem, param1, name_star, abu, wv_le
+         nonlocal abu_fin, ew, snr, chi, param_mc, plot_data, rot_data
+         if tana.startswith(ABU_KEYS):
+             abu_fin, ew, snr, chi, param_mc, plot_data = perform_analysis(wvl, flux, fit1, fit2, wv_left, wv_right, answer, wl_syn, fl_syn_br, abu, param1, **arg_extra)
+-            plotter.update(plot_data)
++            show(plot_data)
+         elif tana == 'ROTAT':
+             rot_data = rotation_fit()
+-            plotter.update(rot_data)
++            show(rot_data)
++
++    def show(data):
++        """Update the plot; NEW (1.4.0): with the resolution used for the line (legend of the main
++        panel; with AUTO_RES the measured one)."""
++        plotter.update({**data, 'resol': param1['res']})
+ 
+     def save_line_plot():
+         """Save the plot of the line (PDF), record its name for the final merged PDF, close it."""
+@@ -426,20 +424,22 @@ def measure_line(wvl, flux, sss, fit1, fit2, elem, param1, name_star, abu, wv_le
+         plotter.close()
+ 
+     def final_ew_and_mc():
+-        """EW, EP and log gf of the line (from K2, or the fitted EW in grid mode) and the Monte Carlo
+-        error. Only for the nominal fit (save_plot): the parameter-error reruns skip them."""
++        """EW, EP, log gf and slope of the curve of growth of the line (from K2; in grid mode the
++        fitted EW and no slope) and the Monte Carlo error. Only for the nominal fit (save_plot): the
++        parameter-error reruns skip them."""
+         if cfg.grid == 'y':
+-            ew_k2, EP, loggf = (ew if save_plot else 99.99), 99.999, 99.999
++            ew_k2, EP, loggf, slope = (ew if save_plot else 99.99), 99.999, 99.999, 99.999
+         elif tana not in ['MOLEC', 'ABU2', 'ISOR']:
+-            ew_k2, EP, loggf = (eqw_k2(param1, abu_fin-abu0+delta, window) if save_plot else (99.99, 99.999, 99.999))
++            ew_k2, EP, loggf, slope = (eqw_k2(param1, abu_fin-abu0+delta, window) if save_plot else (99.99, 99.999, 99.999, 99.999))
+         else:
+-            ew_k2, EP, loggf = 99.99, 99.999, 99.999
++            ew_k2, EP, loggf, slope = 99.99, 99.999, 99.999, 99.999
+         abu_err_mc = abu_mc_line(param_mc, snr, abu, seed=mc_seed(param1)) if save_plot and ct_elem < 10 else 99.99
+-        return ew_k2, EP, loggf, abu_err_mc
++        return ew_k2, EP, loggf, slope, abu_err_mc
+ 
+-    def abundance_result(answer, ew_k2, EP, loggf, abu_err_mc):
++    def abundance_result(answer, ew_k2, EP, loggf, slope, abu_err_mc):
+         """Result of an abundance (or isotopic ratio) line, as read by salvador.py."""
+-        return {"abu_fin": abu_fin, "answer": answer, "ew_k2": ew_k2, "snr": snr, "abu_err_mc": abu_err_mc, "abu0": abu0, "EP": EP, "loggf": loggf}
++        return {"abu_fin": abu_fin, "answer": answer, "ew_k2": ew_k2, "snr": snr, "abu_err_mc": abu_err_mc, "abu0": abu0, "EP": EP, "loggf": loggf,
++                "slope": slope}
+ 
+     def rotation_result(answer):
+         """Result of a ROTAT line (last fit; 99.99 if rejected), as read by salvador.py."""
+@@ -459,7 +459,7 @@ def measure_line(wvl, flux, sss, fit1, fit2, elem, param1, name_star, abu, wv_le
+         rot_data = rotation_fit()       # always the latest fit (updated by every menu command)
+         first_plot = rot_data
+     plotter = PlotManager(star_title=name_title, tana=tana) if (cfg.inter == 'y' or save_plot) else NullPlotter()   # SPEED
+-    plotter.update(first_plot)
++    show(first_plot)
+ 
+ 
+     ### INTERACTIVE MODE
+@@ -622,19 +622,19 @@ def measure_line(wvl, flux, sss, fit1, fit2, elem, param1, name_star, abu, wv_le
+                 refit(answer)
+                 plotter.close()
+                 if tana.startswith(ABU_KEYS):
+-                    ew_k2, EP, loggf, abu_err_mc = final_ew_and_mc()
++                    ew_k2, EP, loggf, slope, abu_err_mc = final_ew_and_mc()
+                 break
+ 
+             elif answer in ['r', 'e']:
+                 plotter.close()
+-                abu_fin, abu0, abu_err_mc, EP, loggf, ew_k2 = 99.99, 99.99, 99.99, 99.999, 99.999, 99.99
++                abu_fin, abu0, abu_err_mc, EP, loggf, ew_k2, slope = 99.99, 99.99, 99.99, 99.999, 99.999, 99.99, 99.999
+                 break
+ 
+         if answer in ['y', 'r'] and save_flag == 'y':
+             save_line_plot()
+ 
+         if tana.startswith(ABU_KEYS):
+-            return abundance_result(answer, ew_k2, EP, loggf, abu_err_mc)
++            return abundance_result(answer, ew_k2, EP, loggf, slope, abu_err_mc)
+         elif tana == 'ROTAT':
+             # result of the LAST fit, error from the Monte Carlo; 99.99 if rejected (r)
+             return rotation_result(answer)
+@@ -651,7 +651,7 @@ def measure_line(wvl, flux, sss, fit1, fit2, elem, param1, name_star, abu, wv_le
+         # may be outside the grid: the line is rejected, as 'Out of limit' in the automatic mode with K2
+         if _at_grid_edge(abu_fin, abu, chi, tana):
+             plot_data.update({"abu_fin": 99.99})
+-            plotter.update(plot_data)
++            show(plot_data)
+             if save_flag == 'y':
+                 save_line_plot()
+             print('---')
+@@ -659,8 +659,8 @@ def measure_line(wvl, flux, sss, fit1, fit2, elem, param1, name_star, abu, wv_le
+             return _rejected_result()
+         if save_flag == 'y':
+             save_line_plot()
+-        ew_k2, EP, loggf, abu_err_mc = final_ew_and_mc()
+-        return abundance_result('y', ew_k2, EP, loggf, abu_err_mc)
++        ew_k2, EP, loggf, slope, abu_err_mc = final_ew_and_mc()
++        return abundance_result('y', ew_k2, EP, loggf, slope, abu_err_mc)
+ 
+     elif cfg.inter =='n' and cfg.grid == 'n' and tana.startswith(ABU_KEYS):
+         iterations = 0
+@@ -698,7 +698,7 @@ def measure_line(wvl, flux, sss, fit1, fit2, elem, param1, name_star, abu, wv_le
+         converged = skip_loop or not (chi[-1] <= chi[-2] or chi[0] <= chi[1])
+         if not converged:
+             plot_data.update({"abu_fin": 99.99})
+-            plotter.update(plot_data)
++            show(plot_data)
+             if save_flag == 'y':
+                 save_line_plot()
+ 
+@@ -710,5 +710,5 @@ def measure_line(wvl, flux, sss, fit1, fit2, elem, param1, name_star, abu, wv_le
+             refit('y')
+             if save_flag == 'y':
+                 save_line_plot()
+-            ew_k2, EP, loggf, abu_err_mc = final_ew_and_mc()
+-            return abundance_result('y', ew_k2, EP, loggf, abu_err_mc)
++            ew_k2, EP, loggf, slope, abu_err_mc = final_ew_and_mc()
++            return abundance_result('y', ew_k2, EP, loggf, slope, abu_err_mc)
+diff --git a/src/salvador/merge_fit.py b/src/salvador/merge_fit.py
+index 4e009a2..4a71826 100755
+--- a/src/salvador/merge_fit.py
++++ b/src/salvador/merge_fit.py
+@@ -13,7 +13,13 @@ Usage (the settings not given on the command line are asked, as before):
+ 
+     salvador-merge                                   # everything asked
+     salvador-merge list.txt --solar 1 --flags keep
++    salvador-merge list.txt --solar 1 --flags recalc --sclip 2.5 --ep 0 10 --ewr-min -6 --slope-min 0.35
+     salvador-merge list.txt --solar 1 --flags recalc --sclip 2.5 --ep 0 10 --ewr -6 -4.4
++
++NEW (1.4.0): the .fit files are read by the names of their header, so files of any version of
++salvador (with or without the columns EWR and SLOPE) can be merged; the merged file has the columns
++of this version. With --flags recalc the strong lines are rejected by the slope of the curve of
++growth (--slope-min, as COG_SLOPE_MIN) or, with --ewr MIN MAX, by the reduced EW (as EWR_MAX).
+ """
+ import argparse
+ import os
+@@ -23,29 +29,20 @@ from dataclasses import dataclass
+ from pathlib import Path
+ 
+ import numpy as np
+-import pandas as pd
+ 
+ from . import __version__
+-from .config import Config, cfg
+-from .fit_files import replace_flag_column
++from .config import EWR_MAX_DEFAULT, Config, cfg
++from .fit_files import ERR_COLS, FIT_COLS, fit_file_header, read_fit_rows, read_fit_table, replace_flag_column
+ from .plotting import fe_diagnostic_plot
+-from .summary import star_abundance_rows
++from .summary import describe_ew_selection, ew_selection_flag, star_abundance_rows, use_saturated_species
+ 
+ ### solar references: choice of salvador-merge -> name (column of solar_abu.txt = choice + 1, the
+ ### value of SOLAR_REF in input.salvador)
+ SOLAR_REFERENCES = {1: 'CL', 2: 'GS98', 3: 'Magg22', 4: 'Asp09'}
+ 
+-COLS_BASE = ['ID', 'line', 'nelem', 'abu', 'ew', 'EP', 'loggf', 'abu_mc']
+-COLS_ERR = ['abu_pT', 'abu_pg', 'abu_pv']
+-MISSING_ERRORS = ['99.99', '99.99', '99.99']
+-
+-FIT_HEADER = ('#   FLAG =  1  (USED LINE)\n'
+-              '#   FLAG =  0  (REJ. SIGMA-CLIPPING)\n'
+-              '#   FLAG = -1  (REJ. EW)\n'
+-              '#   FLAG = -2  (REJ. E.P.)\n'
+-              '#   FLAG = -3  (REJ. ABU)\n'
+-              '#' + '-' * 39 + '\n'
+-              '#SPECTRUM                           LINE   ELEM    ABU      EW      EP  log_gf    eMC')
++COLS_BASE = list(FIT_COLS)         # NEW (1.4.0): with EWR and SLOPE
++COLS_ERR = list(ERR_COLS)
++DEFAULT_SLOPE_MIN = 0.35            # as COG_SLOPE_MIN
+ 
+ FINAL_HEADER = ('#STAR\t\t= name of the spectrum \n'
+                 '#CODE\t\t= element code in kurucz format \n'
+@@ -72,13 +69,25 @@ class MergeSettings:
+             the .fit files are used.
+         sclip: Sigma of the clipping (recalc only).
+         ep: (min, max) excitation potential [eV] (recalc only).
+-        ewr: (min, max) reduced EW, log(EW/lambda) (recalc only).
++        ewr_min: Minimum reduced EW, log(EW/lambda) (recalc only).
++        ewr_max: Maximum reduced EW (recalc only; with slope_min it only removes the very strong
++            lines, as EWR_MAX_DEFAULT in salvador).
++        slope_min: Minimum slope of the curve of growth (recalc only); None: selection by ewr_min
++            and ewr_max only (NEW 1.4.0, as EWR_MAX and COG_SLOPE_MIN in salvador).
+     """
+     solar: int
+     recalc: bool
+     sclip: float = 3.0
+     ep: tuple[float, float] = (0.0, 10.0)
+-    ewr: tuple[float, float] = (-6.0, -4.4)
++    ewr_min: float = -6.0
++    ewr_max: float = EWR_MAX_DEFAULT
++    slope_min: float | None = DEFAULT_SLOPE_MIN
++
++    def selection(self) -> str:
++        """The selection of the lines by their strength, as written in the merged .fit file."""
++        if not self.recalc:
++            return 'flags of the merged .fit files (not recalculated)'
++        return describe_ew_selection(self.ewr_min, self.ewr_max, self.slope_min)
+ 
+ 
+ def get_type_input(prompt: str, target_type: type, valid: Callable | None = None, hint: str = '') -> object:
+@@ -95,6 +104,27 @@ def get_type_input(prompt: str, target_type: type, valid: Callable | None = None
+         print(f"Error: {hint}")
+ 
+ 
++def _ask_strength_selection(args: argparse.Namespace, settings: MergeSettings) -> None:
++    """Selection of the lines by their strength (recalc): from the command line, otherwise asked.
++    NEW (1.4.0): the COG slope (as COG_SLOPE_MIN, with EWR_MAX_DEFAULT against the very strong
++    lines) or the reduced EW only (as EWR_MAX)."""
++    if args.ewr is not None:
++        settings.ewr_min, settings.ewr_max = args.ewr
++        settings.slope_min = None
++        return
++    if args.slope_min is None and args.ewr_min is None:
++        use_ewr = get_type_input('Reject the strong lines by the COG slope (0) or by a maximum EWR (1)?:  ', int,
++                                 lambda v: v in (0, 1), 'choose 0 or 1.') == 1
++        if use_ewr:
++            settings.ewr_min, settings.ewr_max = _ask_range('EWR', '-6.0', str(EWR_MAX_DEFAULT))
++            settings.slope_min = None
++            return
++    settings.ewr_min = args.ewr_min if args.ewr_min is not None else get_type_input('Insert EWR min (es. -6.0): ', float)
++    settings.slope_min = args.slope_min if args.slope_min is not None else get_type_input(
++        f'Insert COG slope min (es. {DEFAULT_SLOPE_MIN}): ', float, lambda v: v >= 0, 'the value cannot be negative.')
++    settings.ewr_max = EWR_MAX_DEFAULT
++
++
+ def _ask_range(name: str, low_default: str, high_default: str) -> tuple[float, float]:
+     """Ask for the minimum and the maximum of a range (minimum < maximum)."""
+     low = get_type_input(f"Insert {name} min (es. {low_default}): ", float)
+@@ -103,54 +133,35 @@ def _ask_range(name: str, low_default: str, high_default: str) -> tuple[float, f
+     return low, high
+ 
+ 
+-def _normalized_row(fields: list[str]) -> tuple[list[str], list[str], str] | None:
+-    """(base columns, error columns, flag) of a data row of a .fit file, whatever the version that
+-    wrote it: 12 fields (with errors and flag), 11 (errors, no flag), 9 (flag, no errors: also the
+-    rejected lines of the interactive mode before salvador 1.1.0), 8 (neither). Missing errors are
+-    99.99, a missing flag is 0. None for a row that cannot be read."""
+-    if len(fields) == 12:
+-        return fields[:8], fields[8:11], fields[11]
+-    if len(fields) == 11:
+-        return fields[:8], fields[8:11], '0'
+-    if len(fields) == 9:
+-        return fields[:8], list(MISSING_ERRORS), fields[8]
+-    if len(fields) == 8:
+-        return fields[:8], list(MISSING_ERRORS), '0'
+-    return None
+-
+-
+-def merge_files(input_filenames: list[str], output_filename: str) -> bool:
+-    """Write the merged .fit file. FIX: all the rows have the same columns: rows without the
+-    parameter errors (other runs, or rejected in the interactive mode) get 99.99 (before, the
+-    columns of those rows were misaligned and the merge failed). Returns False if nothing was read."""
+-    rows, any_errors, ok = [], False, False
++def merge_files(input_filenames: list[str], output_filename: str, selection: str = '') -> bool:
++    """Write the merged .fit file, with the columns of this version (NEW 1.4.0: the files are read
++    by the names of their header, see fit_files.read_fit_rows, so files of older versions, without
++    EWR and SLOPE, can be merged). FIX: all the rows have the same columns: rows without the
++    parameter errors (other runs, or rejected in the interactive mode) get 99.99. Returns False if
++    nothing was read."""
++    rows, any_errors, ok, without_slope = [], False, False, 0
+     for fname in input_filenames:
+         if not os.path.exists(fname):
+             print(f"Attention: File {fname} not found.")
+             continue
+         ok = True
+-        with open(fname) as f:
+-            header = next((r for r in f if r.startswith('#SPECTRUM')), '')
+-        file_has_errors = 'd_Teff' in header
++        file_rows, file_has_errors = read_fit_rows(fname)
+         any_errors |= file_has_errors
+-        with open(fname) as f:
+-            for k, line in enumerate(f, 1):
+-                if not line.strip() or line.lstrip().startswith('#'):
+-                    continue
+-                parsed = _normalized_row(line.split())
+-                if parsed is None:
+-                    print(f"Attention: row {k} of {fname} has {len(line.split())} columns: skipped")
+-                    continue
+-                rows.append(parsed)
++        rows += file_rows
++        without_slope += sum(r['slope'] == '99.999' and r['ew'] != '99.99' for r in file_rows)
+         if not file_has_errors:
+             print(f"Note: {fname} has no errors due to the atmospheric parameters (99.99 in the merged file)")
+     if not ok:
+         return False
++    if without_slope and 'COG slope >=' in selection:      # only when the slope is used (recalc)
++        print(f"Note: {without_slope} line(s) with an EW but without the COG slope (files of salvador < 1.4.0, "
++              f"grid mode, or K2 could not compute it): with --flags recalc only the EWR limits are used for them")
+ 
++    cols = COLS_BASE + (COLS_ERR if any_errors else []) + ['flag']
+     with open(output_filename, 'w') as out:
+-        out.write(FIT_HEADER + ('  d_Teff d_logg  d_vt' if any_errors else '') + '  flag_line\n')
+-        for base, errors, flag in rows:
+-            out.write("\t".join(base + (errors if any_errors else []) + [flag]) + "\n")
++        out.write(fit_file_header(selection).rstrip('\n') + ('  d_Teff d_logg  d_vt' if any_errors else '') + '  flag_line\n')
++        for row in rows:
++            out.write("\t".join(row[c] for c in cols) + "\n")
+     return True
+ 
+ 
+@@ -189,7 +200,7 @@ def process_group(group: list[str], settings: MergeSettings) -> None:
+     output_filename = last_line_parts[0]
+     external_feh = _external_feh(last_line_parts, output_filename)
+ 
+-    if not merge_files(group[:-1], output_filename):
++    if not merge_files(group[:-1], output_filename, settings.selection()):
+         return
+     print(f"{output_filename} created.")
+     if external_feh is not None:
+@@ -221,10 +232,9 @@ def analyze_abundances(abu_file: str, settings: MergeSettings, external_feh: tup
+     abundance_final_merged.txt) and its Fe plot."""
+     try:
+         with open(abu_file) as f:
+-            header = next((r for r in f if r.startswith('#SPECTRUM')), '')
+-        names = COLS_BASE + (COLS_ERR if 'd_Teff' in header else []) + ['flag']
+-        df = pd.read_csv(abu_file, sep=r"\s+", comment='#', header=None, names=names)
+-    except (OSError, ValueError, pd.errors.ParserError) as e:
++            has_errors = 'd_Teff' in next((r for r in f if r.startswith('#SPECTRUM')), '')
++        df = read_fit_table(abu_file)
++    except (OSError, ValueError) as e:
+         print(f"Error during the analysis of {abu_file}: {e}")
+         return
+     if df.empty:
+@@ -237,17 +247,20 @@ def analyze_abundances(abu_file: str, settings: MergeSettings, external_feh: tup
+     flag_line = df['flag'].to_numpy(dtype=int, copy=True)
+ 
+     if settings.recalc:
+-        EW = df['ew'].to_numpy(dtype=float)
+         EP = df['EP'].to_numpy(dtype=float)
+-        EWR = np.log10((np.maximum(EW, 1e-9) / 1000) / df['line'].to_numpy(dtype=float))
+-        # start again from all the lines with an abundance (the -1/-2 flags of the old limits are reset)
++        # start again from all the lines with an abundance (the -1/-2/-4 flags of the old limits are reset)
+         flag_line = np.where(abu != 99.99, 0, flag_line)
+         has_abu = abu != 99.99
+-        # FIX: the EW limits only for the lines with an EW (99.99 = not available, e.g. molecules)
+-        flag_line[has_abu & (EW != 99.99) & ((EWR < settings.ewr[0]) | (EWR > settings.ewr[1]))] = -1
++        # NEW (1.4.0): the same selection as salvador (summary.ew_selection_flag): reduced EW and
++        # COG slope (-4), or reduced EW only with --ewr; lines without EW (99.99) are not judged
++        for i in np.where(has_abu)[0]:
++            flag_line[i] = ew_selection_flag(df['ew'].iat[i], df['line'].iat[i], df['slope'].iat[i],
++                                             settings.ewr_min, settings.ewr_max, settings.slope_min)
+         flag_line[has_abu & (EP != 99.999) & ((EP < settings.ep[0]) | (EP > settings.ep[1]))] = -2
++        if settings.slope_min is not None:      # saturated lines of the species without other lines
++            flag_line = use_saturated_species(nelem, flag_line, label=ID)
+ 
+-    param_errors = tuple(df[c].to_numpy(dtype=float, copy=True) for c in COLS_ERR) if 'abu_pT' in df.columns else None
++    param_errors = tuple(df[c].to_numpy(dtype=float, copy=True) for c in COLS_ERR) if has_errors else None
+     rows, flag_line = star_abundance_rows(ID, nelem, abu, abu_mc, flag_line, param_errors, feh_model=None,
+                                           external_feh=external_feh, select_flag=0 if settings.recalc else 1,
+                                           clip=settings.recalc)
+@@ -274,7 +287,11 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
+                         help='recalc: recalculate the flags (EW, EP limits and sigma-clipping); keep: use the flags of the .fit files')
+     parser.add_argument('--sclip', type=float, help='sigma of the sigma-clipping (with --flags recalc)')
+     parser.add_argument('--ep', type=float, nargs=2, metavar=('MIN', 'MAX'), help='excitation potential limits [eV] (with --flags recalc)')
+-    parser.add_argument('--ewr', type=float, nargs=2, metavar=('MIN', 'MAX'), help='reduced EW limits, log(EW/lambda) (with --flags recalc)')
++    parser.add_argument('--ewr', type=float, nargs=2, metavar=('MIN', 'MAX'),
++                        help='reduced EW limits, log(EW/lambda), instead of the COG slope (as EWR_MAX; with --flags recalc)')
++    parser.add_argument('--ewr-min', type=float, metavar='MIN', help='minimum reduced EW (with --slope-min; with --flags recalc)')
++    parser.add_argument('--slope-min', type=float, metavar='S',
++                        help=f'minimum slope of the curve of growth (as COG_SLOPE_MIN, e.g. {DEFAULT_SLOPE_MIN}; with --flags recalc)')
+     parser.add_argument('--version', action='version', version=f'salvador {__version__}')
+     args = parser.parse_args(argv)
+     if args.sclip is not None and args.sclip <= 0:
+@@ -283,6 +300,10 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
+         value = getattr(args, name)
+         if value is not None and value[0] >= value[1]:
+             parser.error(f'--{name}: MIN must be smaller than MAX')
++    if args.ewr is not None and (args.slope_min is not None or args.ewr_min is not None):
++        parser.error('--ewr (selection by the reduced EW) cannot be used with --slope-min or --ewr-min')
++    if args.slope_min is not None and args.slope_min < 0:
++        parser.error('--slope-min cannot be negative')
+     return args
+ 
+ 
+@@ -304,12 +325,12 @@ def main(argv: list[str] | None = None) -> int:
+ 
+     settings = MergeSettings(solar=solar, recalc=recalc)
+     if recalc:
+-        if args.sclip is None or args.ep is None or args.ewr is None:
+-            print("\n--- Parameters for sigma, EWR, and EP clipping ---")
++        if args.sclip is None or args.ep is None or (args.ewr is None and (args.slope_min is None or args.ewr_min is None)):
++            print("\n--- Parameters for sigma, EP and line-strength (EWR, COG slope) clipping ---")
+         settings.sclip = args.sclip if args.sclip is not None else get_type_input(
+             'Insert value for sigma clipping? ', float, lambda v: v > 0, 'the value must be positive.')
+         settings.ep = tuple(args.ep) if args.ep is not None else _ask_range('EP', '0.0', '10.0')
+-        settings.ewr = tuple(args.ewr) if args.ewr is not None else _ask_range('EWR', '-6.0', '-4.0')
++        _ask_strength_selection(args, settings)
+         print('')
+ 
+     # settings used by the shared functions: sigma-clipping and solar reference (column = choice + 1)
+diff --git a/src/salvador/plotting.py b/src/salvador/plotting.py
+index bea9a26..b25c581 100644
+--- a/src/salvador/plotting.py
++++ b/src/salvador/plotting.py
+@@ -1,8 +1,7 @@
+ """Plots of each line: PlotManager (and NullPlotter for runs that save no plot), plot style."""
+-import math
+ from pathlib import Path
+ import numpy as np
+-from matplotlib.ticker import FormatStrFormatter
++from matplotlib.ticker import AutoMinorLocator, FormatStrFormatter, MultipleLocator
+ 
+ from .config import cfg, plt
+ 
+@@ -41,6 +40,24 @@ def apply_plot_style(ax, xlabel, ylabel):
+         spine.set_linewidth(1.75)
+ 
+ 
++def wavelength_ticks(x0: float, x1: float, max_labels: int = 10) -> tuple[np.ndarray, float | None]:
++    """Major ticks of the wavelength axis of the main panel, and the step of the minor ticks
++    (None: automatic). Windows up to ~20 A as before: a tick every 1 A, or every 2 A from the first
++    integer when there are 10 or more. NEW (1.4.0): for wider windows (up to WINDOW = 50 A), where the
++    labels overlapped, a tick every 5 or 10 A (multiples of the step, at most max_labels labels) with
++    minor ticks every 1 A."""
++    ticks = np.arange(int(np.ceil(x0)), int(np.floor(x1)) + 1)
++    if ticks.size < 10:
++        return ticks, None
++    if ticks[::2].size <= max_labels:
++        return ticks[::2], None
++    for step in (5, 10, 20):
++        aligned = np.arange(int(np.ceil(x0 / step)) * step, int(np.floor(x1 / step)) * step + 1, step)
++        if aligned.size <= max_labels:
++            return aligned, 1.0
++    return aligned, 5.0
++
++
+ def format_axes(ax):
+     """Style of an axis: ticks inside on all sides, minor ticks, thick frame."""
+     ax.tick_params(which='major', direction='in', length=8, top=True, right=True, labelsize=12)
+@@ -171,6 +188,12 @@ class PlotManager:
+         self.vline1.set_xdata([fit1, fit1])
+         self.vline2.set_xdata([fit2, fit2])
+ 
++        # NEW (1.4.0): legend with the resolution used for this line (with AUTO_RES, the measured one)
++        resol = plot_data.get('resol')
++        if resol is not None:
++            self.ax1.legend([self.line_bestfit], [f'R = {int(round(float(resol)))}'], loc='lower left',
++                            frameon=True, edgecolor='k', fontsize=11)
++
+         # Elements such as fill_between and text are easier to remove and create again
+         for fill in self.fill_regions:
+                 fill.remove()
+@@ -184,24 +207,23 @@ class PlotManager:
+         B = np.array(fl_syn2[mask_line])
+         X0 = line - (window / 2)
+         X1 = line + (window / 2)
+-        xticks = np.array(range(int(math.ceil(X0)), int(math.floor(X1)) +1))
+-
+-        if len(xticks) >= 10:
+-            step_tick = 2
+-        else:
+-            step_tick = 1
+-        xticks = np.arange(xticks[0], xticks[-1]+1, step_tick)
++        # NEW (1.4.0): fewer labels for the wide windows (see wavelength_ticks)
++        xticks, minor_step = wavelength_ticks(X0, X1)
++        self.ax1.xaxis.set_minor_locator(MultipleLocator(minor_step) if minor_step else AutoMinorLocator())
++        # labels of the continuum regions: inside the first and last tick as before (wide windows: inside
++        # the first and last integer wavelength, the ticks there are 5-10 A apart)
++        lab0, lab1 = (xticks[0], xticks[-1]) if minor_step is None else (np.ceil(X0), np.floor(X1))
+ 
+         if type_norm == 2:
+             for l, (wleft, wright) in enumerate(zip(wv_left, wv_right)):
+                 fill_obj = self.ax1.fill_between([wleft, wright], [0.0, 0.0], [1.2, 1.2], color='yellow', alpha=0.9, zorder=0)
+                 self.fill_regions.append(fill_obj)
+ 
+-                if wleft > xticks[0] - 0.4 and wright < xticks[-1] + 0.4:
++                if wleft > lab0 - 0.4 and wright < lab1 + 0.4:
+                     self.ax1.text((wleft + wright) / 2, 1.1, l + 1, ha='center', weight='bold')
+-                elif wleft < xticks[0] and wright > xticks[0]:
++                elif wleft < lab0 and wright > lab0:
+                     self.ax1.text(wright - 0.1, 1.1, l + 1, ha='center', weight='bold')
+-                elif wright > xticks[-1] and wleft < xticks[-1]:
++                elif wright > lab1 and wleft < lab1:
+                     self.ax1.text(wleft + 0.1, 1.1, l + 1, ha='center', weight='bold')
+ 
+ 
+@@ -262,6 +284,9 @@ class PlotManager:
+             self.ax3.set_xlim(fit1 - 0.01, fit2 + 0.01)
+             xticks = def_ticks(fit1, fit2)
+             self.ax3.set_xticks(xticks)
++        # NEW (1.4.0): first and last label inside the panel (the last one was cut at the right edge)
++        for tick, align in zip(self.ax3.xaxis.get_major_ticks(), ('left', 'center', 'right')):
++            tick.label1.set_horizontalalignment(align)
+ 
+         overall_min = np.nanmin(np.concatenate((yspec_cut, bestfit_cut)))
+         overall_max = np.nanmax(np.concatenate((yspec_cut, bestfit_cut)))
+diff --git a/src/salvador/regression_check.py b/src/salvador/regression_check.py
+index b778855..c8f27ac 100755
+--- a/src/salvador/regression_check.py
++++ b/src/salvador/regression_check.py
+@@ -9,6 +9,9 @@ Run it in the salvador working directory, after a salvador run.
+ Compared files: abundance_final.txt, abundance_final_isor.txt and every *.fit file of the
+ working directory. The reference is kept in ./regression_ref/. Rows are compared in order,
+ field by field: numbers within the tolerance (default 0: identical), text exactly.
++NEW (1.4.0): when the columns of a file changed between the two runs (e.g. a reference made with an
++older version of salvador), the columns with the same name in the header are compared, and the
++columns present in only one of the two files are listed as a note.
+ Exit code 0 if everything matches, 1 otherwise.
+ """
+ import argparse
+@@ -48,18 +51,44 @@ def same_field(a, b, tol):
+         return a == b
+ 
+ 
+-def compare_file(name, tol):
++def column_map(header_ref, header_new):
++    """When the two headers differ but have unique names: (pairs of indices of the common columns,
++    columns only in the reference, columns only now). None otherwise (comparison by position)."""
++    if (not header_ref or not header_new or header_ref == header_new
++            or len(set(header_ref)) != len(header_ref) or len(set(header_new)) != len(header_new)):
++        return None
++    pairs = [(i, header_new.index(h)) for i, h in enumerate(header_ref) if h in header_new]
++    if not pairs:
++        return None
++    return (pairs, [h for h in header_ref if h not in header_new], [h for h in header_new if h not in header_ref])
++
++
++def compare_file(name, tol, notes=None):
++    """Compare a result file with the reference. Returns (number of rows, differences); notes
++    (a list, if given) receives the columns present in only one of the two files."""
+     header, ref = read_table(REF_DIR / name)
+-    _, new = read_table(name)
++    header_new, new = read_table(name)
+     problems = []
++    mapping = column_map(header, header_new)
++    if mapping is not None and notes is not None:
++        _, only_ref, only_new = mapping
++        if only_ref:
++            notes.append('columns only in the reference: ' + ', '.join(only_ref))
++        if only_new:
++            notes.append('columns only in this run: ' + ', '.join(only_new))
+     if len(ref) != len(new):
+         problems.append(f'number of rows: reference {len(ref)}, now {len(new)}')
+     for i, (r, n) in enumerate(zip(ref, new)):
+         label = ' '.join(r[:2])
+-        if len(r) != len(n):
++        if mapping is not None and len(r) == len(header) and len(n) == len(header_new):
++            pairs = mapping[0]          # same column names, different positions
++        elif len(r) != len(n):
+             problems.append(f'row {i + 1} ({label}): {len(r)} fields in the reference, {len(n)} now')
+             continue
+-        for j, (a, b) in enumerate(zip(r, n)):
++        else:
++            pairs = [(j, j) for j in range(len(r))]
++        for j, k in pairs:
++            a, b = r[j], n[k]
+             if not same_field(a, b, tol):
+                 col = header[j] if header and len(header) == len(r) else f'column {j + 1}'
+                 problems.append(f'row {i + 1} ({label}) {col}: reference {a}, now {b}')
+@@ -97,7 +126,10 @@ def main():
+             print(f'NEW       {name}: not in the reference')
+             all_ok = False
+             continue
+-        nrows, problems = compare_file(name, args.tol)
++        notes = []
++        nrows, problems = compare_file(name, args.tol, notes)
++        for note in notes:
++            print(f'NOTE      {name}: {note}')
+         if problems:
+             all_ok = False
+             print(f'DIFFERENT {name}: {len(problems)} difference(s)')
+diff --git a/src/salvador/summary.py b/src/salvador/summary.py
+index f72f9cf..c99d44e 100644
+--- a/src/salvador/summary.py
++++ b/src/salvador/summary.py
+@@ -1,5 +1,6 @@
+ """Final abundances of a star: mean, sigma-clipping and errors (extract_abu*), the rows of
+-abundance_final.txt (star_abundance_rows, also used by salvador-merge), linear fits."""
++abundance_final.txt (star_abundance_rows, also used by salvador-merge), the selection of the lines
++by their strength (ew_selection_flag, also used by salvador-merge), linear fits."""
+ import numpy as np
+ from scipy import stats
+ from astropy.stats import mad_std
+@@ -9,6 +10,76 @@ from .config import cfg
+ from .elements import abu_absolute, abundance_link, get_element_symbol, strip_ion, symbol_map
+ 
+ MISSING = 99.99     # value not available (in the .fit files and in the results)
++MISSING_SLOPE = 99.999      # COG slope not available (grid, molecules, K2 could not compute it)
++FLAG_EW = -1        # rejected by the reduced EW (EWR_MIN, EWR_MAX)
++FLAG_SLOPE = -4     # NEW (1.4.0): rejected by the slope of the curve of growth (COG_SLOPE_MIN)
++
++
++def reduced_ew(ew: float, line: float) -> float:
++    """log(EW / lambda) (EW in mA, lambda in A); 99.99 if the EW is not available or not positive."""
++    if ew == MISSING or not ew > 0:
++        return MISSING
++    return float(np.log10((ew / 1000.0) / line))
++
++
++def slope_available(slope: float) -> bool:
++    """True if the COG slope is a number (not 99.999 and not NaN)."""
++    return bool(np.isfinite(slope)) and slope != MISSING_SLOPE
++
++
++def ew_selection_flag(ew: float, line: float, slope: float, ewr_min: float, ewr_max: float,
++                      slope_min: float | None) -> int:
++    """Flag of a line from its strength: 0 (kept), FLAG_EW (-1) or FLAG_SLOPE (-4).
++
++    NEW (1.4.0). The line is rejected (-1) if its reduced EW, log(EW/lambda), is below ewr_min or
++    above ewr_max, or if the EW is 0 (K2 did not find the line); then, if slope_min is given, it is
++    rejected (-4) if the slope of its curve of growth is below slope_min. A line without EW (99.99)
++    is not judged; a line without slope (99.999 or NaN) is judged only by its reduced EW.
++
++    Args:
++        ew: Equivalent width [mA] (99.99 = not available).
++        line: Wavelength [A].
++        slope: Slope of the curve of growth, d log(EW/lambda) / d A(X) (99.999 = not available).
++        ewr_min, ewr_max: Limits of the reduced EW.
++        slope_min: Minimum slope, or None to select by the reduced EW only (EWR_MAX given).
++    """
++    if ew == MISSING:
++        return 0
++    ewr = reduced_ew(ew, line)
++    if ewr == MISSING or not ewr_min <= ewr <= ewr_max:
++        return FLAG_EW
++    if slope_min is not None and slope_available(slope) and slope < slope_min:
++        return FLAG_SLOPE
++    return 0
++
++
++def describe_ew_selection(ewr_min: float, ewr_max: float, slope_min: float | None) -> str:
++    """One line describing the selection of the lines by their strength (printed and written in
++    the header of the .fit files)."""
++    if slope_min is None:
++        return f'EWR from {ewr_min:.2f} to {ewr_max:.2f} (COG slope not used)'
++    return (f'EWR >= {ewr_min:.2f} and COG slope >= {slope_min:.2f} (EWR <= {ewr_max:.2f} for the very strong lines; '
++            f'saturated lines used only for the species without other lines)')
++
++
++def use_saturated_species(nelem: np.ndarray, flag_line: np.ndarray, label: str = '') -> np.ndarray:
++    """NEW (1.4.0): the lines rejected only by the slope of the curve of growth (flag -4) are used
++    (flag 0) for the species that have no other usable line (flag 0), e.g. K I 7699 or the Ba II
++    lines of a cool giant: their abundance is kept, with the larger uncertainty shown by the
++    parameter errors. For a species with unsaturated lines the saturated ones stay rejected.
++    A note is printed for each species concerned. Returns the new flags (the input is not changed).
++    """
++    flags = np.array(flag_line, dtype=int, copy=True)
++    nelem = np.asarray(nelem, dtype=float)
++    for nel in np.unique(nelem):
++        species = nelem == nel
++        saturated = species & (flags == FLAG_SLOPE)
++        if np.any(saturated) and not np.any(flags[species] == 0):
++            flags[saturated] = 0
++            name = get_element_symbol(nel, symbol_map)
++            print(f"Note{f' ({label})' if label else ''}: {name} ({nel:.2f}): all its lines are saturated (COG slope < "
++                  f"COG_SLOPE_MIN): {np.count_nonzero(saturated)} line(s) used anyway")
++    return flags
+ 
+ 
+ def _mean_valid(values: np.ndarray) -> float:
+@@ -207,8 +278,8 @@ def star_abundance_rows(ID, nelem, abu, abu_mc, flag_line, param_errors=None, fe
+     rows = []
+     errors = param_errors is not None
+     fe_errors = None
+-    has_fe = 26.00 in nelem
+-    if has_fe:
++    fe_row = None
++    if 26.00 in nelem:
+         if errors:
+             nlin, feh, sigma, s1, s2, s3, s4, flag_line, s_param, params_XH = extract_abu_fe(
+                 nelem, abu, abu_mc, 26.00, flag_line, *param_errors, select_flag=select_flag, clip=clip)
+@@ -217,8 +288,15 @@ def star_abundance_rows(ID, nelem, abu, abu_mc, flag_line, param_errors=None, fe
+             nlin, feh, sigma, flag_line, s_param, params_XH = extract_abu_fe(nelem, abu, abu_mc, 26.00, flag_line,
+                                                                              select_flag=select_flag, clip=clip)
+             s1 = sigma
+-        fe_row = (nlin, feh, sigma, s1, s_param, params_XH['abu_abs'], params_XH['s_tot'], params_XH['s_int'], params_XH['s_params'])
+-    elif feh_model is not None:     # salvador without Fe I lines: the [M/H] of the model
++        # FIX (1.4.0): when all the Fe I lines are rejected (e.g. by their EW or COG slope), as without
++        # Fe I lines (before: [Fe/H] = 99.99 entered the [X/Fe], e.g. [Mg/Fe] = -100.51)
++        if nlin > 0:
++            fe_row = (nlin, feh, sigma, s1, s_param, params_XH['abu_abs'], params_XH['s_tot'], params_XH['s_int'], params_XH['s_params'])
++        else:
++            fe_errors = None
++    if fe_row is not None:
++        pass
++    elif feh_model is not None:     # salvador without (usable) Fe I lines: the [M/H] of the model
+         feh = feh_model
+         if errors:
+             s1, fe_errors = 0.0, (0.0, 0.0, 0.0)
+@@ -226,7 +304,7 @@ def star_abundance_rows(ID, nelem, abu, abu_mc, flag_line, param_errors=None, fe
+         else:
+             s1 = 99.99
+             fe_row = (0, feh, 99.99, 99.99, 99.99, abu_absolute('Fe', feh, feh), 99.99, 99.99, 99.99)
+-    else:                           # salvador-merge without Fe I lines: [Fe/H] not known
++    else:                           # salvador-merge without (usable) Fe I lines: [Fe/H] not known
+         feh, s1 = None, 99.99
+         fe_errors = (0.0, 0.0, 0.0) if errors else None
+         fe_row = (0, 99.99, 99.99, 99.99, 99.99, 99.99, 99.99, 99.99, 99.99)
+diff --git a/tests/data/keywords/ABU2/expected/abundance_final.txt b/tests/data/keywords/ABU2/expected/abundance_final.txt
+index cc42073..0ba43df 100644
+--- a/tests/data/keywords/ABU2/expected/abundance_final.txt
++++ b/tests/data/keywords/ABU2/expected/abundance_final.txt
+@@ -11,6 +11,6 @@
+ #E_X/H_PARAM	= atmospheric params error. Sum in quadrature of error due to Teff, logg, and vt 
+ #--------------------------------------------------------------------------------------------------------------
+ #STAR                            CODE  N_LIN    ABU  ERROR  E_INT  E_PARAM     A_ABS   E_XH E_XH_INT E_XH_PARAM
+-star10uc                        26.00      1  -1.08  99.99   0.03  99.99        6.44  99.99    0.03   99.99
+-star10uc                        12.00      1   0.56  99.99   0.04  99.99        7.02  99.99    0.02   99.99
++star10uc                        26.00      1  -1.07  99.99   0.03  99.99        6.45  99.99    0.03   99.99
++star10uc                        12.00      1   0.55  99.99   0.04  99.99        7.02  99.99    0.02   99.99
+ #---------------------------------------
+diff --git a/tests/data/keywords/ABU2/expected/star10uc.fit b/tests/data/keywords/ABU2/expected/star10uc.fit
+index 2e881fe..c8de4e6 100644
+--- a/tests/data/keywords/ABU2/expected/star10uc.fit
++++ b/tests/data/keywords/ABU2/expected/star10uc.fit
+@@ -3,7 +3,10 @@
+ #   FLAG = -1  (REJ. EW)
+ #   FLAG = -2  (REJ. E.P.)
+ #   FLAG = -3  (REJ. ABU)
++#   FLAG = -4  (REJ. COG SLOPE)
++#   SELECTION: EWR from -6.00 to -4.40 (COG slope not used)
++#   EWR = log(EW/lambda); SLOPE = d log(EW/lambda) / d A(X) from K2 (99.999 = not available)
+ #---------------------------------------
+-#SPECTRUM                           LINE   ELEM    ABU      EW      EP  log_gf    eMC  d_Teff d_logg  d_vt  flag_line
+-star10uc                        8804.624  26.00   6.44  145.58   2.279  -3.234   0.03   0.08  99.99  -0.04   1
+-star10uc                        8806.756  12.00   7.02   99.99  99.999  99.999   0.02   0.02  99.99   0.00   1
++#SPECTRUM                           LINE   ELEM    ABU      EW     EWR   SLOPE      EP  log_gf    eMC  d_Teff d_logg  d_vt  flag_line
++star10uc                        8804.624  26.00   6.45  145.58   -4.78   0.337   2.279  -3.234   0.03   0.07  99.99  -0.05   1
++star10uc                        8806.756  12.00   7.02   99.99   99.99  99.999  99.999  99.999   0.02   0.02  99.99   0.00   1
+diff --git a/tests/data/keywords/ABU2/input.salvador b/tests/data/keywords/ABU2/input.salvador
+index f8429d8..e33bde0 100644
+--- a/tests/data/keywords/ABU2/input.salvador
++++ b/tests/data/keywords/ABU2/input.salvador
+@@ -6,4 +6,4 @@ SCLIP	 	= 3
+ CALC_BEST	= n
+ AUTO_RES	= 50
+ NPIX_RV		= 0.5
+-
++EWR_MAX		= -4.4
+diff --git a/tests/data/keywords/MOLEC/expected/M54_LR2_1500138_norm_rvc.fit b/tests/data/keywords/MOLEC/expected/M54_LR2_1500138_norm_rvc.fit
+index a2a3b10..1934e06 100644
+--- a/tests/data/keywords/MOLEC/expected/M54_LR2_1500138_norm_rvc.fit
++++ b/tests/data/keywords/MOLEC/expected/M54_LR2_1500138_norm_rvc.fit
+@@ -3,6 +3,9 @@
+ #   FLAG = -1  (REJ. EW)
+ #   FLAG = -2  (REJ. E.P.)
+ #   FLAG = -3  (REJ. ABU)
++#   FLAG = -4  (REJ. COG SLOPE)
++#   SELECTION: EWR >= -6.00 and COG slope >= 0.35 (EWR <= -4.40 for the very strong lines; saturated lines used only for the species without other lines)
++#   EWR = log(EW/lambda); SLOPE = d log(EW/lambda) / d A(X) from K2 (99.999 = not available)
+ #---------------------------------------
+-#SPECTRUM                           LINE   ELEM    ABU      EW      EP  log_gf    eMC  flag_line
+-M54_LR2_1500138_norm_rvc        4323.500   6.00   6.22   99.99  99.999  99.999   0.01   1
++#SPECTRUM                           LINE   ELEM    ABU      EW     EWR   SLOPE      EP  log_gf    eMC  flag_line
++M54_LR2_1500138_norm_rvc        4323.500   6.00   6.22   99.99   99.99  99.999  99.999  99.999   0.01   1
+diff --git a/tests/data/tutorial_subset/expected/M54_HR18_1500138.fit b/tests/data/tutorial_subset/expected/M54_HR18_1500138.fit
+index bfdad8e..a29b807 100644
+--- a/tests/data/tutorial_subset/expected/M54_HR18_1500138.fit
++++ b/tests/data/tutorial_subset/expected/M54_HR18_1500138.fit
+@@ -3,10 +3,13 @@
+ #   FLAG = -1  (REJ. EW)
+ #   FLAG = -2  (REJ. E.P.)
+ #   FLAG = -3  (REJ. ABU)
++#   FLAG = -4  (REJ. COG SLOPE)
++#   SELECTION: EWR >= -6.00 and COG slope >= 0.35 (EWR <= -4.40 for the very strong lines; saturated lines used only for the species without other lines)
++#   EWR = log(EW/lambda); SLOPE = d log(EW/lambda) / d A(X) from K2 (99.999 = not available)
+ #---------------------------------------
+-#SPECTRUM                           LINE   ELEM    ABU      EW      EP  log_gf    eMC  flag_line
+-M54_HR18_1500138                7461.519  26.00   6.15   51.75   2.559  -3.585   0.01   1
+-M54_HR18_1500138                7489.578  22.00   3.85   16.92   2.249  -0.910   0.02   1
+-M54_HR18_1500138                7496.103  22.00  99.99   99.99  99.999  99.999  99.99  -3
+-M54_HR18_1500138                7555.597  28.00   4.53   81.11   3.847   0.054   0.01   1
+-M54_HR18_1500138                7711.721  26.01   5.89   29.40   3.903  -2.500   0.02   1
++#SPECTRUM                           LINE   ELEM    ABU      EW     EWR   SLOPE      EP  log_gf    eMC  flag_line
++M54_HR18_1500138                7461.519  26.00   6.15   51.75   -5.16   0.738   2.559  -3.585   0.01   1
++M54_HR18_1500138                7489.578  22.00   3.85   16.92   -5.65   0.965   2.249  -0.910   0.02   1
++M54_HR18_1500138                7496.103  22.00  99.99   99.99   99.99  99.999  99.999  99.999  99.99  -3
++M54_HR18_1500138                7555.597  28.00   4.53   81.11   -4.97   0.540   3.847   0.054   0.01   1
++M54_HR18_1500138                7711.721  26.01   5.89   29.40   -5.42   0.905   3.903  -2.500   0.02   1
+diff --git a/tests/fake_k2/k2.py b/tests/fake_k2/k2.py
+index 180308d..bacf004 100755
+--- a/tests/fake_k2/k2.py
++++ b/tests/fake_k2/k2.py
+@@ -4,19 +4,34 @@
+ salvador finds K2 as the command k2.py in the PATH and runs it on ./input.k2. This module
+ answers the requests of input.k2 from files of a real run:
+ 
+-* ``synthe``: copies the synthetic spectrum <name>.nb from the directory FAKE_K2_SYNTH;
+-* ``eqw``/``eqwb``: writes info_ew.txt with EW, EP and log gf of the line, read from the
+-  .fit file FAKE_K2_EW;
++* ``synthe``: copies the synthetic spectrum <name>.nb from the directory FAKE_K2_SYNTH. With
++  FAKE_K2_INTERPOLATE = 1, a synthetic missing there is interpolated linearly in the abundance between
++  the two nearest synthetics of the same model, element and window, or extrapolated from the two
++  nearest ones by at most 0.05 dex (written in the log as 'INTERPOLATED'): used when a change of
++  salvador moves a fit to an abundance not in the cache;
++* ``eqw``/``eqwb``: writes info_ew.txt as K2 (version of November 2026) does: wavelength, EW, EP,
++  log gf and slope of the curve of growth. EW, EP and log gf are read from the .fit file
++  FAKE_K2_EW (by the names of its header, so .fit files of any version can be used). The slope is
++  NOT from a real run: it is computed from log(EW/lambda) with the median relation of the curve of
++  growth of 954 Fe I lines of a giant computed with K2 (logistic fit, centred slope A +- 0.1 dex),
++  unless FAKE_K2_SLOPE gives a value for every line (a number or 'nan'). With FAKE_K2_EW_COLUMNS = 4
++  the file is written as the previous K2 did (without the slope);
+ * ``atlas9``: nothing (the synthetic spectra are already computed).
+ 
+ A request that cannot be answered ends with exit code 1, as a failing K2 would. Every call is
+ written to the file FAKE_K2_LOG (if set).
+ """
++import math
+ import os
++import re
+ import shutil
+ import sys
+ from pathlib import Path
+ 
++# S(y) = S_MIN + (1 - S_MIN) / (1 + exp((y - Y0) / WIDTH)), y = log(EW/lambda): median relation
++# of the K2 curves of growth of a giant (Teff 4500 K, logg 0.70, [M/H] -1.5, vt 2.0 km/s)
++S_MIN, Y0, WIDTH = 0.0401, -4.9518, 0.2117
++
+ 
+ def _log(message: str) -> None:
+     log = os.environ.get('FAKE_K2_LOG')
+@@ -27,13 +42,68 @@ def _log(message: str) -> None:
+ 
+ def _ew_of_line(line: float) -> list[str] | None:
+     """EW, EP and log gf of the line from the .fit file FAKE_K2_EW, or None."""
++    names = None
+     for row in Path(os.environ['FAKE_K2_EW']).read_text().splitlines():
++        if row.startswith('#SPECTRUM'):
++            names = row.replace('#', ' ').split()
++            continue
+         fields = row.split()
+-        if fields and not row.startswith('#') and abs(float(fields[1]) - line) < 1e-4:
+-            return fields[4:7]
++        if not fields or row.startswith('#'):
++            continue
++        if abs(float(fields[1]) - line) < 1e-4:
++            cols = names or ['SPECTRUM', 'LINE', 'ELEM', 'ABU', 'EW', 'EP', 'log_gf', 'eMC']
++            return [fields[cols.index(name)] for name in ('EW', 'EP', 'log_gf')]
+     return None
+ 
+ 
++def _slope(ew: float, line: float) -> str:
++    """Slope of the curve of growth written in info_ew.txt (see the module docstring)."""
++    fixed = os.environ.get('FAKE_K2_SLOPE')
++    if fixed is not None:
++        return 'nan' if fixed.strip().lower() == 'nan' else f'{float(fixed):.3f}'
++    if not ew > 0:
++        return 'nan'
++    y = math.log10(ew / 1000.0 / line)
++    return f'{S_MIN + (1 - S_MIN) / (1 + math.exp((y - Y0) / WIDTH)):.3f}'
++
++
++def _delta(code: str) -> float:
++    """Abundance change of the code in the name of a synthetic spectrum (p004 -> 0.04, m037 -> -0.37)."""
++    return (-1 if code[0] == 'm' else 1) * int(code[1:]) / 100
++
++
++def _interpolate(name: str, cache: Path) -> bool:
++    """Write the synthetic ``name`` by linear interpolation in the abundance between the two nearest
++    synthetics of the cache of the same model, element and window (or extrapolation by at most
++    0.05 dex from the two nearest ones). False if not possible."""
++    match = re.fullmatch(r'(.+_)([pm]\d{3})(_\d+_\d+\.nb)', name)
++    if os.environ.get('FAKE_K2_INTERPOLATE') != '1' or not match:
++        return False
++    head, target, tail = match.group(1), _delta(match.group(2)), match.group(3)
++    known = sorted((_delta(f.name[len(head):-len(tail)]), f) for f in cache.glob(f'{head}*{tail}')
++                   if re.fullmatch(r'[pm]\d{3}', f.name[len(head):-len(tail)]))
++    below = [k for k in known if k[0] < target]
++    above = [k for k in known if k[0] > target]
++    if below and above:
++        (d0, f0), (d1, f1) = below[-1], above[0]
++    elif len(known) >= 2 and min(abs(d - target) for d, _ in known) <= 0.05 + 1e-9:
++        (d0, f0), (d1, f1) = below[-2:] if below else above[:2]
++    else:
++        return False
++    w = (target - d0) / (d1 - d0)
++    rows0, rows1 = f0.read_text().splitlines(), f1.read_text().splitlines()
++    out = []
++    for r0, r1 in zip(rows0, rows1):
++        if r0.startswith('#'):
++            out.append(r0)
++            continue
++        v0, v1 = [float(v) for v in r0.split()], [float(v) for v in r1.split()]
++        v = [v0[0]] + [a + w * (b - a) for a, b in zip(v0[1:], v1[1:])]
++        out.append(f'{v[0]:11.4f}{v[1]:13.6f}' + ''.join(f'{x:20.8E}' for x in v[2:]))
++    Path(name).write_text('\n'.join(out) + '\n')
++    return True
++
++
+ def main() -> None:
+     """Answer the requests of ./input.k2 (see the module docstring)."""
+     for tok in (r.split() for r in Path('input.k2').read_text().splitlines() if r.strip()):
+@@ -42,11 +112,14 @@ def main() -> None:
+             # synthe teff logg met alpha vt linelist abu_var w1 w2 res 0 <name> 0
+             name = tok[12] + '.nb'
+             src = Path(os.environ['FAKE_K2_SYNTH']) / name
+-            if not src.exists():
++            if src.exists():
++                shutil.copyfile(src, name)
++                _log(f'synthe {name}')
++            elif _interpolate(name, src.parent):
++                _log(f'INTERPOLATED synthe {name}')
++            else:
+                 _log(f'MISSING synthe {name}')
+                 sys.exit(1)
+-            shutil.copyfile(src, name)
+-            _log(f'synthe {name}')
+         elif key in ('eqw', 'eqwb'):
+             # eqw teff logg met alpha vt linelist delta_file line code delta
+             line = float(tok[8])
+@@ -54,7 +127,10 @@ def main() -> None:
+             if values is None:
+                 _log(f'MISSING eqw {line}')
+                 sys.exit(1)
+-            Path('info_ew.txt').write_text(f'{line} {" ".join(values)}\n')
++            row = f'{line} {" ".join(values)}'
++            if os.environ.get('FAKE_K2_EW_COLUMNS') != '4':
++                row += ' ' + _slope(float(values[0]), line)
++            Path('info_ew.txt').write_text(row + '\n')
+             _log(f'eqw {line}')
+         elif key == 'atlas9':
+             _log('atlas9 ' + ' '.join(tok[1:6]))
+diff --git a/tests/test_cog_slope.py b/tests/test_cog_slope.py
+new file mode 100644
+index 0000000..525add0
+--- /dev/null
++++ b/tests/test_cog_slope.py
+@@ -0,0 +1,315 @@
++"""salvador 1.4.0: slope of the curve of growth from K2 (COG_SLOPE_MIN, flag -4), EWR_MAX as an
++alternative, the columns EWR and SLOPE of the .fit files (also read and merged from older files),
++the K2 format check, the resolution in the plot, the regression check by column names, the
++saturated lines of the species without other lines, the parameter errors of the saturated lines,
++the local RV correction by template fit and the wavelength ticks of the wide windows."""
++import os
++import subprocess
++import sys
++from pathlib import Path
++
++import numpy as np
++import pytest
++from pypdf import PdfReader
++
++from conftest import EXPECTED_SUBSET, KEYWORDS, prepare_case, prepare_subset, run_salvador, set_keyword
++from salvador import regression_check
++from salvador.config import EWR_MAX_DEFAULT, Config, load_config
++from salvador.fit_files import read_fit_rows, read_fit_table
++from salvador.fitting import template_shift
++from salvador.k2_interface import K2_FORMAT_MESSAGE, K2FormatError, _parse_k2_linelist, read_info_ew
++from salvador.plotting import wavelength_ticks
++from salvador.summary import (FLAG_EW, FLAG_SLOPE, describe_ew_selection, ew_selection_flag, reduced_ew,
++                              star_abundance_rows, use_saturated_species)
++
++STAR = 'M54_HR18_1500138'
++ENV_MPL = {**os.environ, 'MPLBACKEND': 'Agg'}
++
++
++def rows(path):
++    return [r.split() for r in Path(path).read_text().splitlines() if r.strip() and not r.startswith('#')]
++
++
++# ------------------------------------------------------------------ EW file of K2
++@pytest.mark.parametrize('text, expected', [
++    ('6300.310 36.10 0.000 -9.776 0.935\n', (36.10, 0.0, -9.776, 0.935)),
++    ('6300.310 0.00 0.000 0.000 nan\n', (0.0, 0.0, 0.0, 99.999)),        # no slope: 99.999
++])
++def test_read_info_ew(tmp_path, text, expected):
++    (tmp_path / 'info_ew.txt').write_text(text)
++    assert read_info_ew(tmp_path / 'info_ew.txt') == pytest.approx(expected)
++
++
++def test_old_k2_format_is_refused(tmp_path):
++    (tmp_path / 'info_ew.txt').write_text('6300.310 36.10 0.000 -9.776\n')
++    with pytest.raises(K2FormatError, match='salvador needs EW file with the COG slope'):
++        read_info_ew(tmp_path / 'info_ew.txt')
++    (tmp_path / 'info_ew.txt').write_text('6300.310 36.10\n')
++    with pytest.raises(ValueError):
++        read_info_ew(tmp_path / 'info_ew.txt')
++
++
++# ------------------------------------------------------------------ selection of the lines
++@pytest.mark.parametrize('ew, slope, limits, flag', [
++    (50.0, 0.70, (-6.0, -4.4, 0.35), 0),             # weak line, linear part
++    (80.0, 0.30, (-6.0, -4.4, 0.35), FLAG_SLOPE),    # saturated: rejected by the slope
++    (80.0, 0.30, (-6.0, -4.4, None), 0),             # EWR_MAX given: the slope is not used
++    (500.0, 0.48, (-6.0, -4.4, 0.35), FLAG_EW),      # damping part: slope rises again, EWR > -4.4
++    (80.0, 99.999, (-6.0, -4.4, 0.35), 0),           # no slope: only the EWR limits
++    (80.0, float('nan'), (-6.0, -4.4, 0.35), 0),
++    (0.0, 99.999, (-6.0, -4.4, 0.35), FLAG_EW),      # EW = 0: K2 did not find the line
++    (0.01, 0.99, (-6.0, -4.4, 0.35), FLAG_EW),       # below EWR_MIN
++    (99.99, 99.999, (-6.0, -4.4, 0.35), 0),          # no EW (e.g. molecules): not judged
++])
++def test_ew_selection_flag(ew, slope, limits, flag):
++    assert ew_selection_flag(ew, 6000.0, slope, *limits) == flag
++
++
++def test_reduced_ew():
++    assert reduced_ew(60.0, 6000.0) == pytest.approx(-5.0)
++    assert reduced_ew(0.0, 6000.0) == 99.99 and reduced_ew(99.99, 6000.0) == 99.99
++
++
++def test_selection_settings(tmp_path):
++    base = 'OBS = a\nNORM = 1\nWINDOW = 10\nINTER = n\nSCLIP = 3\n'
++    (tmp_path / 'in').write_text(base)
++    config = load_config(tmp_path / 'in')
++    assert config.cog_slope_min == 0.35 and config.ewr_max is None
++    assert config.ew_selection() == (-6.0, EWR_MAX_DEFAULT, 0.35)            # default: COG slope
++    (tmp_path / 'in').write_text(base + 'EWR_MAX = -4.6\nCOG_SLOPE_MIN = 0.4\n')
++    assert load_config(tmp_path / 'in').ew_selection() == (-6.0, -4.6, None)  # EWR_MAX replaces the slope
++    grid = Config(input_stars='a', type_norm=1, window=10, inter='n', sclip=3, path_syn='list.syn')
++    assert grid.ew_selection() == (-6.0, EWR_MAX_DEFAULT, None)              # grid: no slope
++    for bad in ('COG_SLOPE_MIN = -0.1', 'EWR_MAX = -7'):
++        (tmp_path / 'in').write_text(base + bad + '\n')
++        with pytest.raises(SystemExit):
++            load_config(tmp_path / 'in')
++    assert 'COG slope >= 0.35' in describe_ew_selection(-6.0, -4.4, 0.35)
++    assert 'COG slope not used' in describe_ew_selection(-6.0, -4.6, None)
++
++
++def test_feh_without_usable_fe_lines(settings):
++    # FIX 1.4.0: all the Fe I lines rejected -> [Fe/H] of the model (before: [Mg/Fe] = -100.51)
++    nelem = np.array([26.00, 12.00])
++    abu = np.array([6.44, 7.02])
++    rows_, _ = star_abundance_rows('s', nelem, abu, np.array([0.03, 0.02]), np.array([FLAG_SLOPE, 0]), feh_model=-1.0)
++    fe, mg = rows_[0].split(), rows_[1].split()
++    assert fe[2] == '0' and fe[3] == '-1.00'
++    assert abs(float(mg[3])) < 5
++
++
++@pytest.mark.parametrize('nelem, flags, expected', [
++    # Ti I: only saturated lines -> used; Fe I: a usable line -> the saturated one stays rejected
++    ([26.0, 26.0, 22.0, 22.0], [0, -4, -4, -3], [0, -4, 0, -3]),
++    ([28.0], [-4], [0]),                                  # single saturated line (e.g. K I 7699)
++    ([20.0, 20.0], [-1, -4], [-1, 0]),                    # the other line rejected by EWR: not usable
++    ([20.0, 20.0], [-2, -1], [-2, -1]),                   # no saturated line: nothing changes
++    ([], [], []),
++])
++def test_use_saturated_species(nelem, flags, expected, capsys):
++    given = np.array(flags, dtype=int)
++    result = use_saturated_species(np.array(nelem), given, label='s')
++    assert result.tolist() == expected
++    assert given.tolist() == flags                       # the input is not changed
++    out = capsys.readouterr().out
++    assert ('all its lines are saturated' in out) == (expected != flags)
++
++
++# ------------------------------------------------------------------ local RV correction (template fit)
++def _gauss_line(wave, centre, depth=0.4, sigma=0.15):
++    return 1 - depth * np.exp(-0.5 * ((wave - centre) / sigma) ** 2)
++
++
++@pytest.mark.parametrize('true_pix', [0.0, 0.3, -0.45])
++def test_template_shift_recovers_a_known_shift(true_pix):
++    pix = 0.05
++    wave_t = np.arange(6150, 6170, 0.005)
++    flux_t = _gauss_line(wave_t, 6160.0) * _gauss_line(wave_t, 6160.6, depth=0.2)       # line + blend
++    wave = np.arange(6155, 6165, pix)
++    noise = np.random.default_rng(1).normal(0, 0.005, wave.size)
++    flux = 1.02 + 0.8 * (np.interp(wave - true_pix * pix, wave_t, flux_t) - 1) + noise   # other continuum and depth
++    res = template_shift(wave, flux, wave_t, flux_t, 6159.5, 6160.5, 0.5 * pix, pix)
++    assert res.ok, res.reason
++    assert res.shift / pix == pytest.approx(true_pix, abs=max(3 * res.error / pix, 0.03))
++    assert 0 < res.error / pix < 0.2
++
++
++def test_template_shift_refuses_unreliable_shifts():
++    pix = 0.05
++    wave_t = np.arange(6150, 6170, 0.005)
++    flux_t = _gauss_line(wave_t, 6160.0)
++    wave = np.arange(6155, 6165, pix)
++    rng = np.random.default_rng(2)
++    flat = 1 + rng.normal(0, 0.01, wave.size)
++    res = template_shift(wave, flat, wave_t, flux_t, 6159.5, 6160.5, 0.5 * pix, pix)
++    assert not res.ok                                    # no line: noise only
++    far = np.interp(wave - 2.0 * pix, wave_t, flux_t)     # 2 pixels, NPIX_RV = 0.5
++    res = template_shift(wave, far, wave_t, flux_t, 6159.5, 6160.5, 0.5 * pix, pix)
++    assert not res.ok and res.reason == 'no minimum within the allowed shift'
++    res = template_shift(wave, far, wave_t, flux_t, 6160.0, 6160.1, 0.5 * pix, pix)
++    assert not res.ok and res.reason == 'too few pixels'
++
++
++# ------------------------------------------------------------------ ticks of the main plot
++@pytest.mark.parametrize('window, step, minor', [(5, 1, None), (10, 2, None), (20, 2, None), (21, 5, 1.0),
++                                                 (35, 5, 1.0), (50, 5, 1.0)])
++def test_wavelength_ticks(window, step, minor):
++    x0, x1 = 6160.7 - window / 2, 6160.7 + window / 2
++    ticks, minor_step = wavelength_ticks(x0, x1)
++    assert minor_step == minor
++    assert np.all(np.diff(ticks) == step) and x0 <= ticks[0] and ticks[-1] <= x1
++    assert len(ticks) <= 10
++    if step >= 5:
++        assert np.all(ticks % step == 0)
++
++
++@pytest.mark.parametrize('window', np.arange(1, 50.5, 0.5))
++def test_wavelength_ticks_never_more_than_ten(window):
++    for centre in (4000.25, 6160.7, 8805.0):
++        assert len(wavelength_ticks(centre - window / 2, centre + window / 2)[0]) <= 10
++
++
++# ------------------------------------------------------------------ .fit files of any version
++OLD_FIT = ('#   FLAG =  1  (USED LINE)\n'
++           '#SPECTRUM                           LINE   ELEM    ABU      EW      EP  log_gf    eMC  d_Teff d_logg  d_vt  flag_line\n'
++           's  6000.000  26.00  6.00  60.00  2.000  -2.000  0.02  0.05  0.01  0.02   1\n'
++           's  6100.000  26.00  99.99  99.99  99.999  99.999  99.99   1\n')        # 1.0 rejected row: no errors
++
++
++def test_read_old_fit_file(tmp_path):
++    (tmp_path / 'old.fit').write_text(OLD_FIT)
++    rows_, has_errors = read_fit_rows(tmp_path / 'old.fit')
++    assert has_errors and len(rows_) == 2
++    assert rows_[0]['ewr'] == '-5.00' and rows_[0]['slope'] == '99.999' and rows_[0]['abu_pT'] == '0.05'
++    assert rows_[1]['abu_pT'] == '99.99' and rows_[1]['flag'] == '1' and rows_[1]['ewr'] == '99.99'
++    df = read_fit_table(tmp_path / 'old.fit')
++    assert list(df['flag']) == [1, 1] and df['ew'].iat[0] == 60.0
++
++
++def test_merge_old_and_new_fit_files(tmp_path):
++    (tmp_path / 'old.fit').write_text(OLD_FIT)
++    (tmp_path / 'new.fit').write_text((EXPECTED_SUBSET / f'{STAR}.fit').read_text())
++    (tmp_path / 'list.txt').write_text('old.fit\nnew.fit\nmerged.fit\n')
++    proc = subprocess.run([sys.executable, '-m', 'salvador.merge_fit', 'list.txt', '--solar', '1', '--flags', 'recalc',
++                           '--sclip', '3', '--ep', '0', '10', '--ewr-min', '-6', '--slope-min', '0.75'],
++                          cwd=tmp_path, capture_output=True, text=True, env=ENV_MPL, timeout=300)
++    assert proc.returncode == 0, proc.stdout + proc.stderr
++    assert 'without the COG slope' in proc.stdout
++    header = [r for r in (tmp_path / 'merged.fit').read_text().splitlines() if r.startswith('#SPECTRUM')][0]
++    assert header.split()[5:7] == ['EWR', 'SLOPE'] and 'COG slope >= 0.75' in (tmp_path / 'merged.fit').read_text()
++    merged = {r[1]: r for r in rows(tmp_path / 'merged.fit')}
++    assert len(merged) == 7 and all(len(r) == 14 for r in merged.values())
++    assert merged['6000.000'][5:7] == ['-5.00', '99.999'] and merged['6000.000'][-1] == '1'   # old: EWR only
++    assert merged['7461.519'][-1] == '-4'      # Fe I, slope 0.738 < 0.75: rejected (6000.000 is usable)
++    assert merged['7555.597'][-1] == '1'       # Ni I, slope 0.540: the only Ni line, used anyway
++    assert 'Ni (28.00): all its lines are saturated' in proc.stdout
++
++
++def test_regression_by_column_names(tmp_path, monkeypatch, capsys):
++    # reference written by 1.3.0 (no EWR, SLOPE), results of 1.4.0: the common columns are compared
++    monkeypatch.chdir(tmp_path)
++    new = (EXPECTED_SUBSET / f'{STAR}.fit').read_text()
++    old = '\n'.join(r.replace('     EWR   SLOPE', '') if r.startswith('#') else
++                    ' '.join(f for i, f in enumerate(r.split()) if i not in (5, 6)) for r in new.splitlines()) + '\n'
++    (tmp_path / f'{STAR}.fit').write_text(old)
++    monkeypatch.setattr('sys.argv', ['salvador-regression', 'save'])
++    assert regression_check.main() == 0
++    (tmp_path / f'{STAR}.fit').write_text(new)
++    monkeypatch.setattr('sys.argv', ['salvador-regression'])
++    assert regression_check.main() == 0
++    out = capsys.readouterr().out
++    assert 'columns only in this run: EWR, SLOPE' in out and 'ALL RESULTS IDENTICAL' in out
++
++
++# ------------------------------------------------------------------ K2 linelist file
++def test_linelist_comments_and_lowercase_markers(tmp_path):
++    (tmp_path / 'linelist.xkur').write_text('#atoms\n# a comment\nfe.dat\n#MOLECULES\nco.dat\n')
++    assert _parse_k2_linelist(tmp_path / 'linelist.xkur') == [('#ATOMS', ['fe.dat']), ('#MOLECULES', ['co.dat'])]
++
++
++# ------------------------------------------------------------------ complete runs (stand-in for K2)
++def subset_run(path, nproc='2', **env_extra):
++    env = prepare_subset(path)
++    set_keyword(path, 'NPROC', nproc)
++    return run_salvador(path, {**env, **env_extra})
++
++
++@pytest.mark.parametrize('nproc', ['1', '2'])
++def test_old_k2_stops_the_run(tmp_path, nproc):
++    path = tmp_path / 'run'
++    run = subset_run(path, nproc, FAKE_K2_EW_COLUMNS='4')
++    assert run.returncode != 0
++    assert run.output.strip().endswith(K2_FORMAT_MESSAGE)
++    assert not (path / f'{STAR}.pdf').exists()
++
++
++def test_saturated_species_are_used(tmp_path):
++    # every line saturated (slope 0.20): flag -4, but each species of the subset has no other usable
++    # line, so they are all used anyway: the results are those of the reference run
++    path = tmp_path / 'run'
++    run = subset_run(path, FAKE_K2_SLOPE='0.20')
++    assert run.returncode == 0, run.output
++    assert run.output.count('all its lines are saturated') == 4          # Fe, Ti, Ni, FeII
++    assert 'Fe (26.00): all its lines are saturated (COG slope < COG_SLOPE_MIN): 1 line(s) used anyway' in run.output
++    assert all(r[6] == '0.200' for r in rows(path / f'{STAR}.fit') if r[3] != '99.99')
++    assert 'FLAG = -4  (REJ. COG SLOPE)' in (path / f'{STAR}.fit').read_text()
++    assert [r[:6] + r[7:] for r in rows(path / f'{STAR}.fit')] == [r[:6] + r[7:] for r in rows(EXPECTED_SUBSET / f'{STAR}.fit')]
++    assert rows(path / 'abundance_final.txt') == rows(EXPECTED_SUBSET / 'abundance_final.txt')
++
++
++@pytest.mark.parametrize('slope', ['0.20', None])
++def test_parameter_errors_of_saturated_lines(tmp_path, slope):
++    # 13 columns in lista.stars: errors on the parameters. They are computed also for the lines with
++    # flag -4 (before 1.4.0: 0.00). The stand-in has no synthetic of the changed models: every fit
++    # stops and the error is 99.99, as for the accepted lines
++    path = tmp_path / 'run'
++    env = prepare_subset(path)
++    stars = path / 'lista.stars'
++    stars.write_text(stars.read_text().rstrip('\n') + ' 0.2\n')
++    run = run_salvador(path, {**env, **({'FAKE_K2_SLOPE': slope} if slope else {})})
++    assert run.returncode == 0, run.output
++    header = [r for r in (path / f'{STAR}.fit').read_text().splitlines() if r.startswith('#SPECTRUM')][0].split()
++    assert header[10:13] == ['d_Teff', 'd_logg', 'd_vt']
++    for r in rows(path / f'{STAR}.fit'):
++        if r[3] != '99.99':
++            assert r[10:12] == ['99.99', '99.99'], r                     # Teff and logg: attempted
++            assert r[12] == ('99.99' if float(r[4]) > 50 else '0.00'), r  # vt only for EW > 50 mA
++
++
++def test_ewr_max_replaces_the_slope(tmp_path):
++    path = tmp_path / 'run'
++    env = prepare_subset(path)
++    set_keyword(path, 'EWR_MAX', '-4.4')
++    run = run_salvador(path, {**env, 'FAKE_K2_SLOPE': '0.20'})
++    assert run.returncode == 0, run.output
++    assert 'EWR from -6.00 to -4.40 (COG slope not used)' in run.output
++    assert [r[:6] + r[7:] for r in rows(path / f'{STAR}.fit')] == [r[:6] + r[7:] for r in rows(EXPECTED_SUBSET / f'{STAR}.fit')]
++
++
++def test_missing_slope_uses_the_ewr_limits(tmp_path):
++    path = tmp_path / 'run'
++    run = subset_run(path, '1', FAKE_K2_SLOPE='nan')
++    assert run.returncode == 0, run.output
++    assert 'K2 gave no COG slope' in run.output
++    assert [r[-1] for r in rows(path / f'{STAR}.fit')] == [r[-1] for r in rows(EXPECTED_SUBSET / f'{STAR}.fit')]
++    assert all(r[6] == '99.999' for r in rows(path / f'{STAR}.fit'))
++
++
++def test_ewr_and_slope_columns_and_resolution_in_the_plot(tmp_path):
++    path = tmp_path / 'run'
++    run = subset_run(path)
++    assert run.returncode == 0, run.output
++    for r in rows(path / f'{STAR}.fit'):
++        if r[4] != '99.99':
++            assert float(r[5]) == pytest.approx(np.log10(float(r[4]) / 1000 / float(r[1])), abs=0.006)
++    text = ''.join(page.extract_text() for page in PdfReader(path / f'{STAR}.pdf').pages)
++    assert text.count('R = 18000') == 5          # one plot per line (resolution of the linelist)
++
++
++def test_measured_resolution_in_the_plot(tmp_path):
++    # ABU2 case: AUTO_RES, the legend shows the measured resolution
++    path = tmp_path / 'run'
++    run = run_salvador(path, prepare_case(KEYWORDS / 'ABU2', path, KEYWORDS / 'ABU2' / 'expected' / 'star10uc.fit'))
++    assert run.returncode == 0, run.output
++    text = ''.join(page.extract_text() for page in PdfReader(path / 'star10uc.pdf').pages)
++    assert 'R = ' in text
+diff --git a/tests/test_end_to_end.py b/tests/test_end_to_end.py
+index 95ca6f5..34d29bb 100644
+--- a/tests/test_end_to_end.py
++++ b/tests/test_end_to_end.py
+@@ -100,7 +100,7 @@ def test_version_and_check(tmp_path):
+ 
+ def test_mc_error_for_elements_with_few_lines(parallel_run):
+     # fewer than 10 lines of Fe here: the Monte Carlo error is computed (99.99 otherwise)
+-    emc = {row[1]: row[7] for row in parallel_run.data_rows(f'{STAR}.fit')}
++    emc = {row[1]: row[9] for row in parallel_run.data_rows(f'{STAR}.fit')}
+     assert emc['7461.519'] != '99.99'
+ 
+ 
+@@ -117,7 +117,8 @@ def test_merge_of_fit_files(tmp_path):
+     (tmp_path / 'part1.fit').write_text(fit)
+     (tmp_path / 'part2.fit').write_text(fit)
+     (tmp_path / 'list.txt').write_text('part1.fit\npart2.fit\nmerged.fit\n')
+-    answers = 'list.txt\n1\n0\n3\n0\n10\n-6.1\n-4.4\n'      # list, solar ref, recalc flags, sclip, EP and EWR limits
++    # list, solar ref, recalc flags, sclip, EP limits, selection by EWR (1; 0 = COG slope), EWR limits
++    answers = 'list.txt\n1\n0\n3\n0\n10\n1\n-6.1\n-4.4\n'
+     proc = subprocess.run([sys.executable, '-m', 'salvador.merge_fit'], cwd=tmp_path, input=answers,
+                           capture_output=True, text=True, env={**os.environ, 'MPLBACKEND': 'Agg'}, timeout=300)
+     assert proc.returncode == 0, proc.stdout + proc.stderr
+diff --git a/tests/test_fixes_1_1.py b/tests/test_fixes_1_1.py
+index 978b721..bf39fd3 100644
+--- a/tests/test_fixes_1_1.py
++++ b/tests/test_fixes_1_1.py
+@@ -57,9 +57,9 @@ def test_grid_errors_without_perturbed_synthetics(tmp_path):
+     run = run_salvador(path, grid_case(path, errors='100 0.1 0.1'))
+     assert run.returncode == 0, run.output
+     fit = {r[1]: r for r in rows(path / f'{STAR}.fit')}
+-    assert fit['7461.519'][8] == '99.99'                   # before: 0.00
+-    assert fit['7711.721'][9] == '99.99'                   # Fe II: logg error
+-    assert fit['7461.519'][9] == '99.99'                   # Fe I: logg error too (1.2.0)
++    assert fit['7461.519'][10] == '99.99'                  # before: 0.00 (1.4.0: columns 8-10 -> 10-12)
++    assert fit['7711.721'][11] == '99.99'                  # Fe II: logg error
++    assert fit['7461.519'][11] == '99.99'                  # Fe I: logg error too (1.2.0)
+     assert 'Grid (Teff + 100 K): no synthetic spectra' in run.output
+     fe = [r for r in rows(path / 'abundance_final.txt') if r[1] == '26.00'][0]
+     assert fe[6] == '99.99'                                # E_PARAM not available
+@@ -69,9 +69,9 @@ def test_grid_errors_from_perturbed_synthetics(tmp_path):
+     path = tmp_path / 'run'
+     run = run_salvador(path, grid_case(path, errors='100 0 0', perturbed_teff=100))
+     assert run.returncode == 0, run.output
+-    d_teff = [float(r[8]) for r in rows(path / f'{STAR}.fit') if r[3] != '99.99']
++    d_teff = [float(r[10]) for r in rows(path / f'{STAR}.fit') if r[3] != '99.99']
+     assert any(0 < d < 0.5 for d in d_teff), d_teff        # weaker lines: higher abundance (signed)
+-    assert all(r[9] == '0.00' and r[10] == '0.00' for r in rows(path / f'{STAR}.fit') if r[3] != '99.99')
++    assert all(r[11] == '0.00' and r[12] == '0.00' for r in rows(path / f'{STAR}.fit') if r[3] != '99.99')
+ 
+ 
+ # ------------------------------------------------------------------ 2) names of the synthetics
+@@ -192,8 +192,8 @@ def test_rejected_line_has_error_columns_and_merges(tmp_path):
+     run = run_salvador(path, grid_case(path, errors='100 0.1 0.1', INTER='y'), answers='y\nr\n' + 'y\n' * 30)
+     assert run.returncode == 0, run.output
+     result = rows(path / f'{STAR}.fit')
+-    assert all(len(r) == 12 for r in result)
+-    assert result[1][1] == '7489.578' and result[1][3] == '99.99' and result[1][8:11] == ['99.99'] * 3
++    assert all(len(r) == 14 for r in result)         # 1.4.0: + EWR and SLOPE
++    assert result[1][1] == '7489.578' and result[1][3] == '99.99' and result[1][10:13] == ['99.99'] * 3
+     (path / 'list.txt').write_text(f'{STAR}.fit\nmerged.fit\n')
+     proc = subprocess.run([sys.executable, '-m', 'salvador.merge_fit', 'list.txt', '--solar', '1', '--flags', 'keep'],
+                           cwd=path, capture_output=True, text=True, env=ENV_MPL, timeout=300)
+@@ -299,12 +299,15 @@ def test_merge_external_feh_with_its_error(tmp_path):
+ def test_merge_refuses_wrong_choices(tmp_path):
+     shutil.copy(EXPECTED_SUBSET / f'{STAR}.fit', tmp_path)
+     (tmp_path / 'list.txt').write_text(f'{STAR}.fit\nmerged.fit\n')
+-    answers = 'list.txt\n7\n1\n5\n0\n-2\n3\n0\n10\n-6\n-7\n-4.4\n'    # wrong: 7, 5, -2, max -7 < min -6
++    # wrong: 7, 5, -2, 2 (1.4.0: COG slope 0 or EWR 1), max -7 < min -6
++    answers = 'list.txt\n7\n1\n5\n0\n-2\n3\n0\n10\n2\n1\n-6\n-7\n-4.4\n'
+     proc = merge(tmp_path, answers=answers)
+     assert proc.returncode == 0, proc.stdout + proc.stderr
+-    assert proc.stdout.count('Error:') == 4
++    assert proc.stdout.count('Error:') == 5
+     assert (tmp_path / 'merged.pdf').exists()
+     proc = merge(tmp_path, ['list.txt', '--solar', '9'])
+     assert proc.returncode == 2 and 'invalid choice' in proc.stderr
+     proc = merge(tmp_path, ['list.txt', '--ep', '5', '1'])
+     assert proc.returncode == 2 and 'MIN must be smaller' in proc.stderr
++    proc = merge(tmp_path, ['list.txt', '--ewr', '-6', '-4.4', '--slope-min', '0.35'])
++    assert proc.returncode == 2 and 'cannot be used with --slope-min' in proc.stderr
+diff --git a/tests/test_grid.py b/tests/test_grid.py
+index cd94a8e..faeaa51 100644
+--- a/tests/test_grid.py
++++ b/tests/test_grid.py
+@@ -81,7 +81,7 @@ def test_merge_of_grid_results(tmp_path):
+     # file and its plot must be created (before: "Axis limits cannot be NaN or Inf")
+     shutil.copy(TESTS / 'data' / 'merge_grid' / '47Tuc_12272_up.fit', tmp_path)
+     (tmp_path / 'tomerge.txt').write_text('47Tuc_12272_up.fit\nmerged.fit\n')
+-    answers = 'tomerge.txt\n1\n0\n3\n0\n8\n-6\n-4.5\n'
++    answers = 'tomerge.txt\n1\n0\n3\n0\n8\n1\n-6\n-4.5\n'      # 1: selection by EWR (old file: no COG slope)
+     proc = subprocess.run([sys.executable, '-m', 'salvador.merge_fit'], cwd=tmp_path, input=answers, text=True,
+                           capture_output=True, env={**os.environ, 'MPLBACKEND': 'Agg'}, timeout=300)
+     assert proc.returncode == 0
+diff --git a/tests/test_keywords.py b/tests/test_keywords.py
+index 9213ebd..9540f96 100644
+--- a/tests/test_keywords.py
++++ b/tests/test_keywords.py
+@@ -4,14 +4,19 @@ previous version of salvador (see the notes of each case), with the changes of 1
+ in the case ABU2: signed parameter errors (d_vt of the Fe line is -0.04), and the logg error is
+ computed for every line (before 1.1.0: only ionized species): the stand-in has no synthetic for
+ logg + 0.10, so d_logg of both lines is 99.99 (the fit stopped by the missing synthetic gives
+-99.99) and so are the total errors."""
++99.99) and so are the total errors. 1.4.0, case ABU2: the new local RV correction (template fit,
++NPIX_RV) finds the Fe line 0.04 pixels to the blue (before, from the centre of the line: 0.13 pixels
++to the red): A(Fe) +0.01 dex, d_Teff and d_vt -0.01; the fits at the new abundances use synthetics
++interpolated by the stand-in (FAKE_K2_INTERPOLATE)."""
+ import pytest
+ 
+ from conftest import KEYWORDS, prepare_case, run_salvador
+ 
+ # case: (interactive answers or None, result files)
+ CASES = {
+-    # NORM = 1, AUTO_RES, NPIX_RV, CALC_BEST = n, errors on the atmospheric parameters (13 columns)
++    # NORM = 1, AUTO_RES, NPIX_RV, CALC_BEST = n, errors on the atmospheric parameters (13 columns).
++    # EWR_MAX = -4.4 in input.salvador (1.4.0): the selection of the previous versions (with the COG slope
++    # the Fe line, EW = 146 mA at 8805 A, slope 0.34, gets flag -4, and is used as the only Fe I line)
+     'ABU2': (None, ['star10uc.fit', 'abundance_final.txt']),
+     # interactive, NORM = 2, ABS abundance of C. Every line accepted with 'y': ratio 5 (the run of
+     # the author, with interactive adjustments, gave 3); the ABU lines are outside the spectrum
+@@ -39,7 +44,10 @@ def runs(tmp_path_factory):
+             source = KEYWORDS / name
+             ew = next((f for f in (source / 'expected').glob('*.fit') if not f.stem.endswith(('_isor', '_rot'))), None)
+             path = tmp_path_factory.mktemp(name) / 'run'
+-            done[name] = run_salvador(path, prepare_case(source, path, ew), answers=CASES[name][0])
++            env = prepare_case(source, path, ew)
++            if name == 'ABU2':
++                env['FAKE_K2_INTERPOLATE'] = '1'      # see the docstring (1.4.0)
++            done[name] = run_salvador(path, env, answers=CASES[name][0])
+         return done[name]
+     return get
+ 
+@@ -51,6 +59,7 @@ def test_results_as_expected(runs, name):
+     missing = [c for c in run.k2_calls if c.startswith('MISSING')]
+     # every synthetic from the cache, except the ABU2 fit with logg + 0.10 (see the docstring)
+     assert all(name == 'ABU2' and 'g087' in c for c in missing), missing
++    assert name == 'ABU2' or not any(c.startswith('INTERPOLATED') for c in run.k2_calls)
+     for result in CASES[name][1]:
+         assert rows(run.path / result) == rows(KEYWORDS / name / 'expected' / result), result
+ 
+@@ -64,12 +73,12 @@ def test_parameter_errors_in_fit_file(runs):
+     fit = runs('ABU2').path / 'star10uc.fit'
+     header = [r for r in fit.read_text().splitlines() if r.startswith('#SPECTRUM')][0]
+     assert 'd_Teff' in header and 'd_logg' in header and 'd_vt' in header
+-    assert all(len(r) == 12 for r in rows(fit))
++    assert all(len(r) == 14 for r in rows(fit))             # 1.4.0: + EWR and SLOPE
+ 
+ 
+ def test_molecules_have_no_ew(runs):
+     row = rows(runs('MOLEC').path / 'M54_LR2_1500138_norm_rvc.fit')[0]
+-    assert row[4:7] == ['99.99', '99.999', '99.999']
++    assert row[4:9] == ['99.99', '99.99', '99.999', '99.999', '99.999']    # EW, EWR, SLOPE, EP, log gf
+ 
+ 
+ def test_rotat_without_vmac_stops_before_k2(tmp_path):

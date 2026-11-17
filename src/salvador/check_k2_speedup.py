@@ -8,8 +8,9 @@ salvador-check-k2: check of the K2 speed-up in salvador. Run it in your salvador
 For each line it computes the same synthetic spectrum and the same equivalent width twice
 with the real K2:
   OLD: external 'k2.py' with the full linelist.xkur (as salvador did before)
-  NEW: in-process K2 with the trimmed linelist and the model check (as salvador does now)
-then compares spectra (number by number, headers excluded) and EWs, and reports the times.
+  NEW: in-process K2 with the trimmed linelist (as salvador does now)
+then compares spectra (number by number, headers excluded), EWs and COG slopes (1.4.0), and
+reports the times.
 """
 import os
 import sys
@@ -84,7 +85,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f'{line:10.3f} A  [{w1}-{w2}]  synthe: old {dt_old:6.2f} s   new {dt_new:6.2f} s   spectra: {diff}')
         ew_o, de_old = run_eqw(us.K2_LINELIST, line, code, external=True)
         ew_n, de_new = run_eqw(us.k2_linelist(w1, w2), line, code, external=False)
-        same_ew = ew_o is not None and ew_n is not None and np.array_equal(ew_o, ew_n)
+        same_ew = ew_o is not None and ew_n is not None and np.array_equal(ew_o, ew_n, equal_nan=True)   # slope may be nan
         all_ok &= same_ew
         e_old.append(de_old)
         e_new.append(de_new)
@@ -96,7 +97,7 @@ def main(argv: list[str] | None = None) -> int:
     print(f'\nMean time per synthetic: old {np.mean(t_old):.2f} s, new {np.mean(t_new):.2f} s')
     print(f'Mean time per EW       : old {np.mean(e_old):.2f} s, new {np.mean(e_new):.2f} s')
     print('(the first "new" call also imports K2 and indexes the linelists once)')
-    print('ALL SPECTRA AND EWs IDENTICAL' if all_ok else 'SOME RESULTS DIFFER: send me the output')
+    print('ALL SPECTRA, EWs AND SLOPES IDENTICAL' if all_ok else 'SOME RESULTS DIFFER: send me the output')
     if os.path.exists('info_ew.txt'):
         os.remove('info_ew.txt')
     return 0 if all_ok else 1

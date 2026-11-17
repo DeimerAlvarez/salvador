@@ -9,6 +9,9 @@ Run it in the salvador working directory, after a salvador run.
 Compared files: abundance_final.txt, abundance_final_isor.txt and every *.fit file of the
 working directory. The reference is kept in ./regression_ref/. Rows are compared in order,
 field by field: numbers within the tolerance (default 0: identical), text exactly.
+NEW (1.4.0): when the columns of a file changed between the two runs (e.g. a reference made with an
+older version of salvador), the columns with the same name in the header are compared, and the
+columns present in only one of the two files are listed as a note.
 Exit code 0 if everything matches, 1 otherwise.
 """
 import argparse
@@ -48,18 +51,44 @@ def same_field(a, b, tol):
         return a == b
 
 
-def compare_file(name, tol):
+def column_map(header_ref, header_new):
+    """When the two headers differ but have unique names: (pairs of indices of the common columns,
+    columns only in the reference, columns only now). None otherwise (comparison by position)."""
+    if (not header_ref or not header_new or header_ref == header_new
+            or len(set(header_ref)) != len(header_ref) or len(set(header_new)) != len(header_new)):
+        return None
+    pairs = [(i, header_new.index(h)) for i, h in enumerate(header_ref) if h in header_new]
+    if not pairs:
+        return None
+    return (pairs, [h for h in header_ref if h not in header_new], [h for h in header_new if h not in header_ref])
+
+
+def compare_file(name, tol, notes=None):
+    """Compare a result file with the reference. Returns (number of rows, differences); notes
+    (a list, if given) receives the columns present in only one of the two files."""
     header, ref = read_table(REF_DIR / name)
-    _, new = read_table(name)
+    header_new, new = read_table(name)
     problems = []
+    mapping = column_map(header, header_new)
+    if mapping is not None and notes is not None:
+        _, only_ref, only_new = mapping
+        if only_ref:
+            notes.append('columns only in the reference: ' + ', '.join(only_ref))
+        if only_new:
+            notes.append('columns only in this run: ' + ', '.join(only_new))
     if len(ref) != len(new):
         problems.append(f'number of rows: reference {len(ref)}, now {len(new)}')
     for i, (r, n) in enumerate(zip(ref, new)):
         label = ' '.join(r[:2])
-        if len(r) != len(n):
+        if mapping is not None and len(r) == len(header) and len(n) == len(header_new):
+            pairs = mapping[0]          # same column names, different positions
+        elif len(r) != len(n):
             problems.append(f'row {i + 1} ({label}): {len(r)} fields in the reference, {len(n)} now')
             continue
-        for j, (a, b) in enumerate(zip(r, n)):
+        else:
+            pairs = [(j, j) for j in range(len(r))]
+        for j, k in pairs:
+            a, b = r[j], n[k]
             if not same_field(a, b, tol):
                 col = header[j] if header and len(header) == len(r) else f'column {j + 1}'
                 problems.append(f'row {i + 1} ({label}) {col}: reference {a}, now {b}')
@@ -97,7 +126,10 @@ def main():
             print(f'NEW       {name}: not in the reference')
             all_ok = False
             continue
-        nrows, problems = compare_file(name, args.tol)
+        notes = []
+        nrows, problems = compare_file(name, args.tol, notes)
+        for note in notes:
+            print(f'NOTE      {name}: {note}')
         if problems:
             all_ok = False
             print(f'DIFFERENT {name}: {len(problems)} difference(s)')

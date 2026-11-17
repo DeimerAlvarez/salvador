@@ -1,8 +1,7 @@
 """Plots of each line: PlotManager (and NullPlotter for runs that save no plot), plot style."""
-import math
 from pathlib import Path
 import numpy as np
-from matplotlib.ticker import FormatStrFormatter
+from matplotlib.ticker import AutoMinorLocator, FormatStrFormatter, MultipleLocator
 
 from .config import cfg, plt
 
@@ -39,6 +38,24 @@ def apply_plot_style(ax, xlabel, ylabel):
     # Axes (spines)
     for spine in ax.spines.values():
         spine.set_linewidth(1.75)
+
+
+def wavelength_ticks(x0: float, x1: float, max_labels: int = 10) -> tuple[np.ndarray, float | None]:
+    """Major ticks of the wavelength axis of the main panel, and the step of the minor ticks
+    (None: automatic). Windows up to ~20 A as before: a tick every 1 A, or every 2 A from the first
+    integer when there are 10 or more. NEW (1.4.0): for wider windows (up to WINDOW = 50 A), where the
+    labels overlapped, a tick every 5 or 10 A (multiples of the step, at most max_labels labels) with
+    minor ticks every 1 A."""
+    ticks = np.arange(int(np.ceil(x0)), int(np.floor(x1)) + 1)
+    if ticks.size < 10:
+        return ticks, None
+    if ticks[::2].size <= max_labels:
+        return ticks[::2], None
+    for step in (5, 10, 20):
+        aligned = np.arange(int(np.ceil(x0 / step)) * step, int(np.floor(x1 / step)) * step + 1, step)
+        if aligned.size <= max_labels:
+            return aligned, 1.0
+    return aligned, 5.0
 
 
 def format_axes(ax):
@@ -171,6 +188,12 @@ class PlotManager:
         self.vline1.set_xdata([fit1, fit1])
         self.vline2.set_xdata([fit2, fit2])
 
+        # NEW (1.4.0): legend with the resolution used for this line (with AUTO_RES, the measured one)
+        resol = plot_data.get('resol')
+        if resol is not None:
+            self.ax1.legend([self.line_bestfit], [f'R = {int(round(float(resol)))}'], loc='lower left',
+                            frameon=True, edgecolor='k', fontsize=11)
+
         # Elements such as fill_between and text are easier to remove and create again
         for fill in self.fill_regions:
                 fill.remove()
@@ -184,24 +207,23 @@ class PlotManager:
         B = np.array(fl_syn2[mask_line])
         X0 = line - (window / 2)
         X1 = line + (window / 2)
-        xticks = np.array(range(int(math.ceil(X0)), int(math.floor(X1)) +1))
-
-        if len(xticks) >= 10:
-            step_tick = 2
-        else:
-            step_tick = 1
-        xticks = np.arange(xticks[0], xticks[-1]+1, step_tick)
+        # NEW (1.4.0): fewer labels for the wide windows (see wavelength_ticks)
+        xticks, minor_step = wavelength_ticks(X0, X1)
+        self.ax1.xaxis.set_minor_locator(MultipleLocator(minor_step) if minor_step else AutoMinorLocator())
+        # labels of the continuum regions: inside the first and last tick as before (wide windows: inside
+        # the first and last integer wavelength, the ticks there are 5-10 A apart)
+        lab0, lab1 = (xticks[0], xticks[-1]) if minor_step is None else (np.ceil(X0), np.floor(X1))
 
         if type_norm == 2:
             for l, (wleft, wright) in enumerate(zip(wv_left, wv_right)):
                 fill_obj = self.ax1.fill_between([wleft, wright], [0.0, 0.0], [1.2, 1.2], color='yellow', alpha=0.9, zorder=0)
                 self.fill_regions.append(fill_obj)
 
-                if wleft > xticks[0] - 0.4 and wright < xticks[-1] + 0.4:
+                if wleft > lab0 - 0.4 and wright < lab1 + 0.4:
                     self.ax1.text((wleft + wright) / 2, 1.1, l + 1, ha='center', weight='bold')
-                elif wleft < xticks[0] and wright > xticks[0]:
+                elif wleft < lab0 and wright > lab0:
                     self.ax1.text(wright - 0.1, 1.1, l + 1, ha='center', weight='bold')
-                elif wright > xticks[-1] and wleft < xticks[-1]:
+                elif wright > lab1 and wleft < lab1:
                     self.ax1.text(wleft + 0.1, 1.1, l + 1, ha='center', weight='bold')
 
 
@@ -262,6 +284,9 @@ class PlotManager:
             self.ax3.set_xlim(fit1 - 0.01, fit2 + 0.01)
             xticks = def_ticks(fit1, fit2)
             self.ax3.set_xticks(xticks)
+        # NEW (1.4.0): first and last label inside the panel (the last one was cut at the right edge)
+        for tick, align in zip(self.ax3.xaxis.get_major_ticks(), ('left', 'center', 'right')):
+            tick.label1.set_horizontalalignment(align)
 
         overall_min = np.nanmin(np.concatenate((yspec_cut, bestfit_cut)))
         overall_max = np.nanmax(np.concatenate((yspec_cut, bestfit_cut)))

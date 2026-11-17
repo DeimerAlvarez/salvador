@@ -4,14 +4,19 @@ previous version of salvador (see the notes of each case), with the changes of 1
 in the case ABU2: signed parameter errors (d_vt of the Fe line is -0.04), and the logg error is
 computed for every line (before 1.1.0: only ionized species): the stand-in has no synthetic for
 logg + 0.10, so d_logg of both lines is 99.99 (the fit stopped by the missing synthetic gives
-99.99) and so are the total errors."""
+99.99) and so are the total errors. 1.4.0, case ABU2: the new local RV correction (template fit,
+NPIX_RV) finds the Fe line 0.04 pixels to the blue (before, from the centre of the line: 0.13 pixels
+to the red): A(Fe) +0.01 dex, d_Teff and d_vt -0.01; the fits at the new abundances use synthetics
+interpolated by the stand-in (FAKE_K2_INTERPOLATE)."""
 import pytest
 
 from conftest import KEYWORDS, prepare_case, run_salvador
 
 # case: (interactive answers or None, result files)
 CASES = {
-    # NORM = 1, AUTO_RES, NPIX_RV, CALC_BEST = n, errors on the atmospheric parameters (13 columns)
+    # NORM = 1, AUTO_RES, NPIX_RV, CALC_BEST = n, errors on the atmospheric parameters (13 columns).
+    # EWR_MAX = -4.4 in input.salvador (1.4.0): the selection of the previous versions (with the COG slope
+    # the Fe line, EW = 146 mA at 8805 A, slope 0.34, gets flag -4, and is used as the only Fe I line)
     'ABU2': (None, ['star10uc.fit', 'abundance_final.txt']),
     # interactive, NORM = 2, ABS abundance of C. Every line accepted with 'y': ratio 5 (the run of
     # the author, with interactive adjustments, gave 3); the ABU lines are outside the spectrum
@@ -39,7 +44,10 @@ def runs(tmp_path_factory):
             source = KEYWORDS / name
             ew = next((f for f in (source / 'expected').glob('*.fit') if not f.stem.endswith(('_isor', '_rot'))), None)
             path = tmp_path_factory.mktemp(name) / 'run'
-            done[name] = run_salvador(path, prepare_case(source, path, ew), answers=CASES[name][0])
+            env = prepare_case(source, path, ew)
+            if name == 'ABU2':
+                env['FAKE_K2_INTERPOLATE'] = '1'      # see the docstring (1.4.0)
+            done[name] = run_salvador(path, env, answers=CASES[name][0])
         return done[name]
     return get
 
@@ -51,6 +59,7 @@ def test_results_as_expected(runs, name):
     missing = [c for c in run.k2_calls if c.startswith('MISSING')]
     # every synthetic from the cache, except the ABU2 fit with logg + 0.10 (see the docstring)
     assert all(name == 'ABU2' and 'g087' in c for c in missing), missing
+    assert name == 'ABU2' or not any(c.startswith('INTERPOLATED') for c in run.k2_calls)
     for result in CASES[name][1]:
         assert rows(run.path / result) == rows(KEYWORDS / name / 'expected' / result), result
 
@@ -64,12 +73,12 @@ def test_parameter_errors_in_fit_file(runs):
     fit = runs('ABU2').path / 'star10uc.fit'
     header = [r for r in fit.read_text().splitlines() if r.startswith('#SPECTRUM')][0]
     assert 'd_Teff' in header and 'd_logg' in header and 'd_vt' in header
-    assert all(len(r) == 12 for r in rows(fit))
+    assert all(len(r) == 14 for r in rows(fit))             # 1.4.0: + EWR and SLOPE
 
 
 def test_molecules_have_no_ew(runs):
     row = rows(runs('MOLEC').path / 'M54_LR2_1500138_norm_rvc.fit')[0]
-    assert row[4:7] == ['99.99', '99.999', '99.999']
+    assert row[4:9] == ['99.99', '99.99', '99.999', '99.999', '99.999']    # EW, EWR, SLOPE, EP, log gf
 
 
 def test_rotat_without_vmac_stops_before_k2(tmp_path):

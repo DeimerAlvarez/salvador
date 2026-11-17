@@ -1,5 +1,93 @@
 # Changelog
 
+## 1.4.0
+
+Needs the version of K2 of November 2026 (or later): its `eqw` writes in `info_ew.txt` the slope
+of the curve of growth of the line, S = d log(EW/lambda) / d A(X), computed with A(X) +- 0.1 dex
+(5 columns: wavelength, EW, EP, log gf, S). With an older K2 the run stops with the message
+"salvador needs EW file with the COG slope".
+
+### Added
+
+* Selection of the strong lines by the slope of the curve of growth: keyword `COG_SLOPE_MIN`
+  (default 0.35). A line with S < `COG_SLOPE_MIN` is not used for the abundances (new flag -4, REJ.
+  COG SLOPE), unless its species has no other usable line (see below). The default comes from the
+  curves of growth of 954 Fe I lines of a metal-poor giant computed with K2 (Teff 4500 K, logg
+  0.70, [M/H] -1.5, vt 2.0 km/s): a line leaves the linear part
+  between S ~ 0.9 and 0.35 (largest curvature at S ~ 0.67); S = 0.35 corresponds to log(EW/lambda)
+  ~ -4.79 (~80 mA at 5000 A, 0.39 dex below the linear curve of growth), with a dependence on the
+  wavelength that a fixed EWR limit does not follow. Lines with hyperfine or isotopic splitting are
+  less saturated than single lines of the same EW, and keep a larger S.
+* `EWR_MAX` is now optional, without default: if it is given in `input.salvador`, the lines are
+  selected by `EWR_MIN` and `EWR_MAX` and the slope is not used (as in the previous versions).
+  Without `EWR_MAX`, the selection is `EWR_MIN` and `COG_SLOPE_MIN`, plus a fixed limit EWR <= -4.4
+  against the very strong lines, whose slope rises again in the damping part (S = 0.4-0.5 at EW ~
+  450-700 mA). That limit is `EWR_MAX_DEFAULT` in `src/salvador/config.py`. With a grid of
+  synthetics (`PATH_SYN`, no slope), `EWR_MAX` (default -4.4) is used. A line without slope (K2
+  could not compute it) is selected by its EWR only, with a note.
+* `.fit` files: new columns `EWR` = log(EW/lambda) and `SLOPE` after `EW` (99.99/99.999 when not
+  available), the flag -4 and a header line with the selection used. The selection is also printed
+  at the start of the run.
+* Saturated lines of the species without other lines: when all the lines of a species that have an
+  abundance are flagged -4 (no line with flag 0), they are used anyway (e.g. K I 7699, the Ba II
+  lines of a cool giant), with a note in the output; for a species with unsaturated lines the
+  saturated ones stay rejected. The same in `salvador-merge --flags recalc`.
+* The parameter errors (`d_Teff`, `d_logg`, `d_vt`) are computed also for the lines with flag -4:
+  for the saturated lines used as above they give the larger uncertainty of the abundance (e.g. K I
+  7699 in the tutorial star, S = 0.18: Teff +-100 K -> +-0.18 dex, vt +-0.2 km/s -> +-0.13 dex);
+  for the others they show how sensitive they are.
+* Plots: the main panel has a legend with the resolution used for the line (with `AUTO_RES`, the
+  measured one).
+
+### Changed
+
+* `salvador-merge` reads the `.fit` files by the names of their columns, so files of any version
+  (with or without `EWR` and `SLOPE`) can be merged; the merged file has the columns of 1.4.0 (EWR
+  computed from EW for the old files, SLOPE 99.999). With `--flags recalc` the selection is the
+  same as in salvador: new options `--ewr-min` and `--slope-min`, or `--ewr MIN MAX` for the EWR
+  limits only; when asked, the choice between the two.
+* `salvador-regression` compares the columns with the same name when the columns of a file changed
+  (e.g. a reference made with 1.3.0), and lists the columns present in only one of the two files.
+* `salvador-check-k2` also compares the slopes.
+* Local RV correction (`NPIX_RV`): the shift is now measured by fitting the broadened synthetic
+  spectrum of the starting abundance to the observed line, c + a (T(lambda - d) - 1), with the
+  continuum level c and the depth scale a free, d scanned in steps of 0.02 pixels and refined with
+  a parabola (error from the curvature of the chi2). The template contains the blends and the
+  hyperfine/isotopic structure, so blended, weak and asymmetric lines no longer bias the shift. The
+  shift is applied only if it is within `NPIX_RV` pixels, the minimum is not at the edge of the scan
+  and the line is detected (depth > 3 times the noise); otherwise a message says why it was not
+  applied (printed also without `VERBOSE`). Before, the centre of the observed line (Gaussian fit
+  and half depth) was compared with the laboratory wavelength, and the shift was applied whenever
+  it was within `NPIX_RV`. Not used for `ABU2` lines (their fit regions exclude the core).
+* Plots: in the main panel, windows wider than ~20 A (up to 50 A) have a label every 5 or 10 A (at
+  most 10 labels, at multiples of the step) and minor ticks every 1 A: before, the labels overlapped.
+  Smaller windows are as before. In the zoom panel the first and last labels are aligned inside the
+  panel.
+* The shortcut `K2_FAST_MODEL_CHECK` (check of the existing model atmosphere before the ODF
+  interpolation, done by wrapping a K2 method) was removed: K2 now does it itself.
+* A line without EW (99.99, e.g. K2 failed) is not judged by the EW limits (before: its EWR was
+  computed from 99.99 mA).
+
+### Fixed
+
+* When all the Fe I lines of a star were rejected (e.g. by the EW limits), [Fe/H] was 99.99 and
+  entered the [X/Fe] (e.g. [Mg/Fe] = -100.51): now the [M/H] of the model is used, as for a star
+  without Fe I lines (salvador-merge: [X/Fe] not available).
+* The trimmed linelists ignore, as K2 does, the comment lines of `linelist.xkur` (lines starting
+  with `#` that are not section markers) and recognise the markers in lower case (before, the
+  comments were taken as file names).
+
+### Tests
+
+* The stand-in for K2 writes the slope (from the median curve of growth of the Fe I lines, or
+  `FAKE_K2_SLOPE`), can write the old 4-column file (`FAKE_K2_EW_COLUMNS = 4`), and with
+  `FAKE_K2_INTERPOLATE = 1` interpolates in the abundance a synthetic missing from the cache.
+* Case ABU2: `EWR_MAX = -4.4` in its `input.salvador` (selection of the previous versions); with the
+  new RV correction the Fe line is found 0.04 pixels to the blue (before: 0.13 pixels to the red):
+  A(Fe) +0.01 dex, d_Teff and d_vt -0.01 dex (expected files updated; the fits at the new
+  abundances use interpolated synthetics). In the cases ISOR and MOLEC the template fit gives
+  shifts larger than `NPIX_RV`, so no correction is applied: results unchanged.
+
 ## 1.3.0
 
 ### Added

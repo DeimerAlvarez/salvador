@@ -1,6 +1,100 @@
-"""The .fit result files: error columns, flags, headers, reading them back."""
+"""The .fit result files: header, error columns, flags, reading them back (also by the names of
+the header, for the files of any version: read_fit_table)."""
 import numpy as np
 import pandas as pd
+
+# columns of the .fit file (names used when it is read back; with the parameter errors they are
+# followed by abu_pT, abu_pg, abu_pv). NEW (1.4.0): ewr and slope.
+FIT_COLS = ('ID', 'line', 'nelem', 'abu', 'ew', 'ewr', 'slope', 'EP', 'loggf', 'abu_mc')
+FIT_HEADER_NAMES = '#SPECTRUM                           LINE   ELEM    ABU      EW     EWR   SLOPE      EP  log_gf    eMC'
+
+
+def fit_file_header(selection: str) -> str:
+    """Header of the .fit file: meaning of the flags, selection of the lines by their strength
+    (NEW 1.4.0, e.g. from summary.describe_ew_selection) and the names of the columns."""
+    return ('#   FLAG =  1  (USED LINE)\n'
+            '#   FLAG =  0  (REJ. SIGMA-CLIPPING)\n'
+            '#   FLAG = -1  (REJ. EW)\n'
+            '#   FLAG = -2  (REJ. E.P.)\n'
+            '#   FLAG = -3  (REJ. ABU)\n'
+            '#   FLAG = -4  (REJ. COG SLOPE)\n'
+            f'#   SELECTION: {selection}\n'
+            '#   EWR = log(EW/lambda); SLOPE = d log(EW/lambda) / d A(X) from K2 (99.999 = not available)\n'
+            '#' + '-' * 39 + '\n'
+            + FIT_HEADER_NAMES + '\n')
+
+
+# names of the header of the .fit files (all versions) -> names of the columns in salvador
+HEADER_TO_COL = {'SPECTRUM': 'ID', 'LINE': 'line', 'ELEM': 'nelem', 'ABU': 'abu', 'EW': 'ew', 'EWR': 'ewr',
+                 'SLOPE': 'slope', 'EP': 'EP', 'log_gf': 'loggf', 'eMC': 'abu_mc',
+                 'd_Teff': 'abu_pT', 'd_logg': 'abu_pg', 'd_vt': 'abu_pv', 'flag_line': 'flag'}
+OLD_FIT_COLS = ('ID', 'line', 'nelem', 'abu', 'ew', 'EP', 'loggf', 'abu_mc')     # before 1.4.0
+ERR_COLS = ('abu_pT', 'abu_pg', 'abu_pv')
+MISSING_ERRORS = ('99.99', '99.99', '99.99')
+
+
+def read_fit_rows(fit_file) -> tuple[list[dict[str, str]], bool]:
+    """Rows of a .fit file of ANY version of salvador, as text, with the columns of this version:
+    FIT_COLS, the three parameter errors and the flag. NEW (1.4.0): the columns are found from the
+    names of the #SPECTRUM header (before, from their position), so the files written before 1.4.0
+    (without EWR and SLOPE) can be read and merged with the new ones. Missing values: EWR computed
+    from EW (99.99 if not available), SLOPE 99.999, errors 99.99, flag 0.
+
+    A data row may have, after the base columns, 3 errors and the flag, only the errors, only the
+    flag, or nothing (e.g. rejected lines of the interactive mode before 1.1.0). A row that does
+    not fit is skipped with a message.
+
+    Returns:
+        (rows, True if the header has the parameter errors). ([], False) if the file is missing.
+    """
+    try:
+        with open(fit_file) as f:
+            lines = f.readlines()
+    except OSError:
+        print(f"Attention: File {fit_file} not found.")
+        return [], False
+    header = next((r for r in lines if r.startswith('#SPECTRUM')), None)
+    names = [HEADER_TO_COL.get(tok, tok) for tok in header.replace('#', ' ').split()] if header else list(OLD_FIT_COLS)
+    base = names[:names.index('abu_mc') + 1] if 'abu_mc' in names else list(OLD_FIT_COLS)
+    has_errors = 'abu_pT' in names
+    rows = []
+    for k, line in enumerate(lines, 1):
+        if not line.strip() or line.lstrip().startswith('#'):
+            continue
+        fields = line.split()
+        extra = len(fields) - len(base)
+        if extra not in (0, 1, 3, 4):
+            print(f"Attention: row {k} of {fit_file} has {len(fields)} columns: skipped")
+            continue
+        row = dict(zip(base, fields[:len(base)]))
+        errors = fields[len(base):len(base) + 3] if extra >= 3 else list(MISSING_ERRORS)
+        row.update(zip(ERR_COLS, errors))
+        row['flag'] = fields[-1] if extra in (1, 4) else '0'
+        if 'ewr' not in row:
+            from .summary import reduced_ew
+            try:
+                ewr = reduced_ew(float(row['ew']), float(row['line']))
+            except (KeyError, ValueError):
+                ewr = 99.99
+            row['ewr'] = '99.99' if ewr == 99.99 else f'{ewr:.2f}'
+        row.setdefault('slope', '99.999')
+        rows.append({col: row[col] for col in FIT_COLS + ERR_COLS + ('flag',)})
+    return rows, has_errors
+
+
+def read_fit_table(fit_file) -> pd.DataFrame:
+    """A .fit file of any version (see read_fit_rows) as a DataFrame with the columns FIT_COLS, the
+    parameter errors and the flag (numbers as float, the flag as int). Empty if there are no rows."""
+    rows, _ = read_fit_rows(fit_file)
+    columns = list(FIT_COLS + ERR_COLS + ('flag',))
+    df = pd.DataFrame(rows, columns=columns)
+    if df.empty:
+        return df
+    for col in columns[1:]:
+        df[col] = df[col].astype(float)
+    df['flag'] = df['flag'].astype(int)
+    return df
+
 
 def add_errors_to_file(abu_file, new_headers, len_cols, delta_pT, delta_pg, delta_pv):
     """Add the three errors due to the parameters (d_Teff, d_logg, d_vt) to the LAST row of a .fit

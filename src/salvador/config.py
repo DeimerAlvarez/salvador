@@ -44,6 +44,12 @@ def configure_warnings() -> None:
 
 # --------------- important values
 c = 299792.458  # speed of light in km/s
+# NEW (1.4.0): largest reduced EW, log(EW/lambda), of the lines used for the abundances when
+# EWR_MAX is not given in input.salvador. With the COG slope (COG_SLOPE_MIN) it only removes the
+# very strong lines, whose slope rises again in the damping part of the curve of growth (S = 0.4-0.5
+# at EW ~ 450-700 mA); with a grid of synthetics (PATH_SYN: no slope) it is the EWR_MAX used.
+# Change this value to change that limit.
+EWR_MAX_DEFAULT = -4.4
 ksize = 101 # kernel size for the median filter used to find the continuum points in the spectrum.
 init_ans = 'zzz'
 
@@ -68,7 +74,8 @@ KEYWORDS = {
     'LIMIT_ABU':    ('limit_abu',      int,   3),       # automatic mode: max variation [+-dex] before skipping a line
     'CALC_BEST':    ('calc_best',      str,   'y'),     # y = compute the +-0.2 dex synthetics for the plot
     'EWR_MIN':      ('ewr_min',        float, -6.0),    # minimum reduced EW, log(EW/lambda)
-    'EWR_MAX':      ('ewr_max',        float, -4.4),    # maximum reduced EW
+    'EWR_MAX':      ('ewr_max',        float, None),    # maximum reduced EW; if given, it replaces COG_SLOPE_MIN (1.4.0)
+    'COG_SLOPE_MIN': ('cog_slope_min', float, 0.35),    # minimum slope of the curve of growth (K2), when EWR_MAX is not given
     'EP_MIN':       ('ep_min',         float, 0.0),     # minimum excitation potential [eV]
     'EP_MAX':       ('ep_max',         float, 10.0),    # maximum excitation potential [eV]
     'VERBOSE':      ('verbose',        int,   0),       # 0 or 1
@@ -101,7 +108,8 @@ class Config:
     limit_abu: int = 3
     calc_best: str = 'y'
     ewr_min: float = -6.0
-    ewr_max: float = -4.4
+    ewr_max: Optional[float] = None
+    cog_slope_min: float = 0.35
     ep_min: float = 0.0
     ep_max: float = 10.0
     verbose: int = 0
@@ -128,6 +136,20 @@ class Config:
     def limit_iter(self):
         """Iterations of the automatic mode allowed by LIMIT_ABU (default +-3 dex = 11 iterations)."""
         return (self.limit_abu * 5) - 4
+
+    def ew_selection(self) -> tuple[float, float, Optional[float]]:
+        """Limits of the selection of the lines by their strength (see summary.ew_selection_flag):
+        (minimum EWR, maximum EWR, minimum COG slope or None).
+
+        NEW (1.4.0): EWR_MAX given -> EWR_MIN and EWR_MAX, the slope is not used; otherwise
+        EWR_MIN, COG_SLOPE_MIN and EWR_MAX_DEFAULT (only against the very strong lines). With a grid
+        of synthetics (no slope): EWR_MIN and EWR_MAX (EWR_MAX_DEFAULT if not given).
+        """
+        if self.ewr_max is not None:
+            return self.ewr_min, self.ewr_max, None
+        if self.grid == 'y':
+            return self.ewr_min, EWR_MAX_DEFAULT, None
+        return self.ewr_min, EWR_MAX_DEFAULT, self.cog_slope_min
 
 
 VMAC_NAMES = ('VF05', 'D14', 'B16', 'C08')     # relations of rotation.VMAC_RELATIONS
@@ -174,7 +196,7 @@ def load_config(path='input.salvador'):
     values = {}
     for key, (field, convert, default) in KEYWORDS.items():
         if key not in raw:
-            if default is None and key not in ('PATH_SYN', 'ROT_VMAC', 'ROT_VMAC_ERR'):    # optional, default None
+            if default is None and key not in ('PATH_SYN', 'ROT_VMAC', 'ROT_VMAC_ERR', 'EWR_MAX'):    # optional, default None
                 sys.exit(f"Error: mandatory keyword '{key}' not found in {path}!")
             values[field] = default
             continue
@@ -204,6 +226,10 @@ def load_config(path='input.salvador'):
         sys.exit(f"Error: ROT_UL_FWHM cannot be negative in {path} (found {cfg.rot_ul_fwhm})")
     if cfg.rot_step <= 0:
         sys.exit(f"Error: ROT_STEP must be positive in {path} (found {cfg.rot_step})")
+    if cfg.cog_slope_min < 0:
+        sys.exit(f"Error: COG_SLOPE_MIN cannot be negative in {path} (found {cfg.cog_slope_min})")
+    if cfg.ewr_max is not None and cfg.ewr_max <= cfg.ewr_min:
+        sys.exit(f"Error: EWR_MAX ({cfg.ewr_max}) must be larger than EWR_MIN ({cfg.ewr_min}) in {path}")
     return cfg
 
 

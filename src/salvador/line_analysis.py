@@ -10,7 +10,7 @@ from .elements import abu_absolute, define_abu0
 from .k2_interface import autok, eqw_k2
 from .spectra_io import readsyn
 from .normalization import find_clipped_regions, norm1, norm2, norm3
-from .fitting import abu_determination, abu_mc_line, convolve_gauss, convolve_gauss2, mc_seed, new_res_est
+from .fitting import abu_determination, abu_mc_line, convolve_gauss, convolve_gauss2, mc_seed, new_res_est, template_shift
 from .rotation import analysis_rotat
 from .plotting import NullPlotter, PlotManager
 
@@ -19,7 +19,8 @@ ABU_KEYS = ('ABU', 'ABU2', 'MOLEC', 'ABU_GF', 'ABUF', 'ISOR')
 
 def _rejected_result():
     """Result of a line that could not be measured (out of limit, or no usable synthetics)."""
-    return {"abu_fin": 99.99, "answer": 'y', "ew_k2": 99.99, "snr": 0, "abu_err_mc": 99.99, "abu0": 99.99, "EP": 99.999, "loggf": 99.999}
+    return {"abu_fin": 99.99, "answer": 'y', "ew_k2": 99.99, "snr": 0, "abu_err_mc": 99.99, "abu0": 99.99, "EP": 99.999, "loggf": 99.999,
+            "slope": 99.999}
 
 def _at_grid_edge(abu_fin: float, abu, chi, tana: str) -> bool:
     """True if the chi2 minimum is at the first or the last abundance of the grid of synthetic
@@ -237,52 +238,44 @@ def measure_line(wvl, flux, sss, fit1, fit2, elem, param1, name_star, abu, wv_le
         flux = norm3(wvl, flux, wl_syn_tmp.value, fl_syn_tmp.value)
 
 
-    ### local correction for RV according to the wave of minimum flux on the spectrum
+    ### measure of the observed line: FWHM (AUTO_RES), area (first synthetics)
     newr, fwhm_obs, pos_line, area_line = new_res_est(wvl, flux, line, resol, fit1, fit2, tana)
 
-    # 1.5 FWHM left and 1.5 FWHM right = 3 FWHM total
-    wvl_start = line - (1.5 * fwhm_obs)
-    wvl_end = line + (1.5 * fwhm_obs)
-
-    # Let's create a mask to take only the pixels inside this region
-    mask_3fwhm = (wvl >= wvl_start) & (wvl <= wvl_end)
-    wvl_region = wvl[mask_3fwhm]
-
-    # We calculate the pixel step if there are enough pixels in the region
-    if len(wvl_region) > 1:
-        pixel_step = np.mean(np.diff(wvl_region))
-        pixel_per_fwhm = fwhm_obs / pixel_step
-
-        if cfg.verbose == 1:
-            print(f"\n--- Local RV correction for line {line} A ---")
-            print(f"Average pixel step in region 3 FWHM: {pixel_step: .4f} A/pixel")
-
-        if pixel_per_fwhm < 2.0:
-            print("WARNING: The line is not correctly sampled.")
-
-    else:
-        print("Error: No pixels found in the specified region. Please check your data or FWHM value.")
-        pixel_step = 0.0
-
-    # tolerance from number of pixels to range in Ångstrom
-    tol_wv = cfg.n_pix_rv * pixel_step
-
-    # Let's calculate the shift (distance between the measured centroid and the laboratory value)
-    delta_wv = pos_line - line
-    if abs(delta_wv) < tol_wv:
-        wvl = wvl - delta_wv
-        if cfg.verbose == 1:
-            print(f"Spectrum realigned! Shifted by {-delta_wv:.4f} A ({abs(delta_wv)/pixel_step:.2f} pixels)\n")
-    else:
-        if cfg.verbose == 1:
-            print(f"Shift too large ({abs(delta_wv):.4f} A = {abs(delta_wv)/pixel_step:.1f} pixels). "
-            f"Exceeds threshold of {cfg.n_pix_rv} pixels. Spectrum has NOT been modified.\n")
+    ### NEW (1.4.0): local RV correction (NPIX_RV) by fitting the broadened synthetic spectrum of the
+    ### starting abundance to the observed line (see fitting.template_shift). Before, the centre of the
+    ### observed line (Gaussian fit and half depth) was compared with the laboratory wavelength: it
+    ### failed with blends, weak lines and asymmetric profiles (hyperfine/isotopic structure), and an
+    ### unreliable shift was applied anyway when it was within NPIX_RV.
+    grid_syn = readsyn(sss, resol, line) if cfg.grid == 'y' else None     # read once (also used below)
+    near = (wvl >= line - 1.5 * fwhm_obs) & (wvl <= line + 1.5 * fwhm_obs)
+    pixel_step = float(np.mean(np.diff(wvl[near]))) if np.count_nonzero(near) > 1 else float(np.median(np.diff(wvl)))
+    if fwhm_obs / pixel_step < 2.0:
+        print("WARNING: The line is not correctly sampled.")
+    if cfg.n_pix_rv > 0 and tana != 'ABU2':
+        if cfg.grid == 'y':
+            wl_tmpl, fl_tmpl = (grid_syn[0].value, grid_syn[1][len(grid_syn[1]) // 2].value) if grid_syn[1] else (None, None)
+        else:
+            wl_tmpl, fl_tmpl = autok(param1, delta, window)
+            fl_tmpl = getattr(convolve_gauss2(wl_tmpl, fl_tmpl, resol), 'value', None)
+            wl_tmpl = getattr(wl_tmpl, 'value', wl_tmpl)
+        if fl_tmpl is not None:
+            fwhm_syn = line / resol
+            rv = template_shift(wvl, flux, wl_tmpl, fl_tmpl, fit1 - fwhm_syn, fit2 + fwhm_syn,
+                                cfg.n_pix_rv * pixel_step, pixel_step)
+            if rv.ok:
+                wvl = wvl - rv.shift
+                if cfg.verbose == 1:
+                    print(f"Local RV correction of line {line}: shifted by {-rv.shift:.4f} A "
+                          f"({-rv.shift / pixel_step:+.2f} +- {rv.error / pixel_step:.2f} pixels)\n")
+            else:
+                print(f"Local RV correction of line {line} not applied: {rv.reason} "
+                      f"(best shift {-rv.shift / pixel_step:+.2f} pixels, NPIX_RV = {cfg.n_pix_rv})\n")
 
 
     ###  syn
     if cfg.grid == 'y':
         abu = abu_absolute(elem, abu, met)
-        wl_syn, fl_syn_br, used = readsyn(sss, resol, line)
+        wl_syn, fl_syn_br, used = grid_syn
         # FIX: keep names and abundances aligned with the spectra actually read
         sss, abu = [sss[k] for k in used], np.asarray(abu)[used]
         if len(used) < 2:
@@ -414,10 +407,15 @@ def measure_line(wvl, flux, sss, fit1, fit2, elem, param1, name_star, abu, wv_le
         nonlocal abu_fin, ew, snr, chi, param_mc, plot_data, rot_data
         if tana.startswith(ABU_KEYS):
             abu_fin, ew, snr, chi, param_mc, plot_data = perform_analysis(wvl, flux, fit1, fit2, wv_left, wv_right, answer, wl_syn, fl_syn_br, abu, param1, **arg_extra)
-            plotter.update(plot_data)
+            show(plot_data)
         elif tana == 'ROTAT':
             rot_data = rotation_fit()
-            plotter.update(rot_data)
+            show(rot_data)
+
+    def show(data):
+        """Update the plot; NEW (1.4.0): with the resolution used for the line (legend of the main
+        panel; with AUTO_RES the measured one)."""
+        plotter.update({**data, 'resol': param1['res']})
 
     def save_line_plot():
         """Save the plot of the line (PDF), record its name for the final merged PDF, close it."""
@@ -426,20 +424,22 @@ def measure_line(wvl, flux, sss, fit1, fit2, elem, param1, name_star, abu, wv_le
         plotter.close()
 
     def final_ew_and_mc():
-        """EW, EP and log gf of the line (from K2, or the fitted EW in grid mode) and the Monte Carlo
-        error. Only for the nominal fit (save_plot): the parameter-error reruns skip them."""
+        """EW, EP, log gf and slope of the curve of growth of the line (from K2; in grid mode the
+        fitted EW and no slope) and the Monte Carlo error. Only for the nominal fit (save_plot): the
+        parameter-error reruns skip them."""
         if cfg.grid == 'y':
-            ew_k2, EP, loggf = (ew if save_plot else 99.99), 99.999, 99.999
+            ew_k2, EP, loggf, slope = (ew if save_plot else 99.99), 99.999, 99.999, 99.999
         elif tana not in ['MOLEC', 'ABU2', 'ISOR']:
-            ew_k2, EP, loggf = (eqw_k2(param1, abu_fin-abu0+delta, window) if save_plot else (99.99, 99.999, 99.999))
+            ew_k2, EP, loggf, slope = (eqw_k2(param1, abu_fin-abu0+delta, window) if save_plot else (99.99, 99.999, 99.999, 99.999))
         else:
-            ew_k2, EP, loggf = 99.99, 99.999, 99.999
+            ew_k2, EP, loggf, slope = 99.99, 99.999, 99.999, 99.999
         abu_err_mc = abu_mc_line(param_mc, snr, abu, seed=mc_seed(param1)) if save_plot and ct_elem < 10 else 99.99
-        return ew_k2, EP, loggf, abu_err_mc
+        return ew_k2, EP, loggf, slope, abu_err_mc
 
-    def abundance_result(answer, ew_k2, EP, loggf, abu_err_mc):
+    def abundance_result(answer, ew_k2, EP, loggf, slope, abu_err_mc):
         """Result of an abundance (or isotopic ratio) line, as read by salvador.py."""
-        return {"abu_fin": abu_fin, "answer": answer, "ew_k2": ew_k2, "snr": snr, "abu_err_mc": abu_err_mc, "abu0": abu0, "EP": EP, "loggf": loggf}
+        return {"abu_fin": abu_fin, "answer": answer, "ew_k2": ew_k2, "snr": snr, "abu_err_mc": abu_err_mc, "abu0": abu0, "EP": EP, "loggf": loggf,
+                "slope": slope}
 
     def rotation_result(answer):
         """Result of a ROTAT line (last fit; 99.99 if rejected), as read by salvador.py."""
@@ -459,7 +459,7 @@ def measure_line(wvl, flux, sss, fit1, fit2, elem, param1, name_star, abu, wv_le
         rot_data = rotation_fit()       # always the latest fit (updated by every menu command)
         first_plot = rot_data
     plotter = PlotManager(star_title=name_title, tana=tana) if (cfg.inter == 'y' or save_plot) else NullPlotter()   # SPEED
-    plotter.update(first_plot)
+    show(first_plot)
 
 
     ### INTERACTIVE MODE
@@ -622,19 +622,19 @@ def measure_line(wvl, flux, sss, fit1, fit2, elem, param1, name_star, abu, wv_le
                 refit(answer)
                 plotter.close()
                 if tana.startswith(ABU_KEYS):
-                    ew_k2, EP, loggf, abu_err_mc = final_ew_and_mc()
+                    ew_k2, EP, loggf, slope, abu_err_mc = final_ew_and_mc()
                 break
 
             elif answer in ['r', 'e']:
                 plotter.close()
-                abu_fin, abu0, abu_err_mc, EP, loggf, ew_k2 = 99.99, 99.99, 99.99, 99.999, 99.999, 99.99
+                abu_fin, abu0, abu_err_mc, EP, loggf, ew_k2, slope = 99.99, 99.99, 99.99, 99.999, 99.999, 99.99, 99.999
                 break
 
         if answer in ['y', 'r'] and save_flag == 'y':
             save_line_plot()
 
         if tana.startswith(ABU_KEYS):
-            return abundance_result(answer, ew_k2, EP, loggf, abu_err_mc)
+            return abundance_result(answer, ew_k2, EP, loggf, slope, abu_err_mc)
         elif tana == 'ROTAT':
             # result of the LAST fit, error from the Monte Carlo; 99.99 if rejected (r)
             return rotation_result(answer)
@@ -651,7 +651,7 @@ def measure_line(wvl, flux, sss, fit1, fit2, elem, param1, name_star, abu, wv_le
         # may be outside the grid: the line is rejected, as 'Out of limit' in the automatic mode with K2
         if _at_grid_edge(abu_fin, abu, chi, tana):
             plot_data.update({"abu_fin": 99.99})
-            plotter.update(plot_data)
+            show(plot_data)
             if save_flag == 'y':
                 save_line_plot()
             print('---')
@@ -659,8 +659,8 @@ def measure_line(wvl, flux, sss, fit1, fit2, elem, param1, name_star, abu, wv_le
             return _rejected_result()
         if save_flag == 'y':
             save_line_plot()
-        ew_k2, EP, loggf, abu_err_mc = final_ew_and_mc()
-        return abundance_result('y', ew_k2, EP, loggf, abu_err_mc)
+        ew_k2, EP, loggf, slope, abu_err_mc = final_ew_and_mc()
+        return abundance_result('y', ew_k2, EP, loggf, slope, abu_err_mc)
 
     elif cfg.inter =='n' and cfg.grid == 'n' and tana.startswith(ABU_KEYS):
         iterations = 0
@@ -698,7 +698,7 @@ def measure_line(wvl, flux, sss, fit1, fit2, elem, param1, name_star, abu, wv_le
         converged = skip_loop or not (chi[-1] <= chi[-2] or chi[0] <= chi[1])
         if not converged:
             plot_data.update({"abu_fin": 99.99})
-            plotter.update(plot_data)
+            show(plot_data)
             if save_flag == 'y':
                 save_line_plot()
 
@@ -710,5 +710,5 @@ def measure_line(wvl, flux, sss, fit1, fit2, elem, param1, name_star, abu, wv_le
             refit('y')
             if save_flag == 'y':
                 save_line_plot()
-            ew_k2, EP, loggf, abu_err_mc = final_ew_and_mc()
-            return abundance_result('y', ew_k2, EP, loggf, abu_err_mc)
+            ew_k2, EP, loggf, slope, abu_err_mc = final_ew_and_mc()
+            return abundance_result('y', ew_k2, EP, loggf, slope, abu_err_mc)

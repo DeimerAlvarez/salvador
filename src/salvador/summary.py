@@ -1,5 +1,6 @@
 """Final abundances of a star: mean, sigma-clipping and errors (extract_abu*), the rows of
-abundance_final.txt (star_abundance_rows, also used by salvador-merge), linear fits."""
+abundance_final.txt (star_abundance_rows, also used by salvador-merge), the selection of the lines
+by their strength (ew_selection_flag, also used by salvador-merge), linear fits."""
 import numpy as np
 from scipy import stats
 from astropy.stats import mad_std
@@ -9,6 +10,76 @@ from .config import cfg
 from .elements import abu_absolute, abundance_link, get_element_symbol, strip_ion, symbol_map
 
 MISSING = 99.99     # value not available (in the .fit files and in the results)
+MISSING_SLOPE = 99.999      # COG slope not available (grid, molecules, K2 could not compute it)
+FLAG_EW = -1        # rejected by the reduced EW (EWR_MIN, EWR_MAX)
+FLAG_SLOPE = -4     # NEW (1.4.0): rejected by the slope of the curve of growth (COG_SLOPE_MIN)
+
+
+def reduced_ew(ew: float, line: float) -> float:
+    """log(EW / lambda) (EW in mA, lambda in A); 99.99 if the EW is not available or not positive."""
+    if ew == MISSING or not ew > 0:
+        return MISSING
+    return float(np.log10((ew / 1000.0) / line))
+
+
+def slope_available(slope: float) -> bool:
+    """True if the COG slope is a number (not 99.999 and not NaN)."""
+    return bool(np.isfinite(slope)) and slope != MISSING_SLOPE
+
+
+def ew_selection_flag(ew: float, line: float, slope: float, ewr_min: float, ewr_max: float,
+                      slope_min: float | None) -> int:
+    """Flag of a line from its strength: 0 (kept), FLAG_EW (-1) or FLAG_SLOPE (-4).
+
+    NEW (1.4.0). The line is rejected (-1) if its reduced EW, log(EW/lambda), is below ewr_min or
+    above ewr_max, or if the EW is 0 (K2 did not find the line); then, if slope_min is given, it is
+    rejected (-4) if the slope of its curve of growth is below slope_min. A line without EW (99.99)
+    is not judged; a line without slope (99.999 or NaN) is judged only by its reduced EW.
+
+    Args:
+        ew: Equivalent width [mA] (99.99 = not available).
+        line: Wavelength [A].
+        slope: Slope of the curve of growth, d log(EW/lambda) / d A(X) (99.999 = not available).
+        ewr_min, ewr_max: Limits of the reduced EW.
+        slope_min: Minimum slope, or None to select by the reduced EW only (EWR_MAX given).
+    """
+    if ew == MISSING:
+        return 0
+    ewr = reduced_ew(ew, line)
+    if ewr == MISSING or not ewr_min <= ewr <= ewr_max:
+        return FLAG_EW
+    if slope_min is not None and slope_available(slope) and slope < slope_min:
+        return FLAG_SLOPE
+    return 0
+
+
+def describe_ew_selection(ewr_min: float, ewr_max: float, slope_min: float | None) -> str:
+    """One line describing the selection of the lines by their strength (printed and written in
+    the header of the .fit files)."""
+    if slope_min is None:
+        return f'EWR from {ewr_min:.2f} to {ewr_max:.2f} (COG slope not used)'
+    return (f'EWR >= {ewr_min:.2f} and COG slope >= {slope_min:.2f} (EWR <= {ewr_max:.2f} for the very strong lines; '
+            f'saturated lines used only for the species without other lines)')
+
+
+def use_saturated_species(nelem: np.ndarray, flag_line: np.ndarray, label: str = '') -> np.ndarray:
+    """NEW (1.4.0): the lines rejected only by the slope of the curve of growth (flag -4) are used
+    (flag 0) for the species that have no other usable line (flag 0), e.g. K I 7699 or the Ba II
+    lines of a cool giant: their abundance is kept, with the larger uncertainty shown by the
+    parameter errors. For a species with unsaturated lines the saturated ones stay rejected.
+    A note is printed for each species concerned. Returns the new flags (the input is not changed).
+    """
+    flags = np.array(flag_line, dtype=int, copy=True)
+    nelem = np.asarray(nelem, dtype=float)
+    for nel in np.unique(nelem):
+        species = nelem == nel
+        saturated = species & (flags == FLAG_SLOPE)
+        if np.any(saturated) and not np.any(flags[species] == 0):
+            flags[saturated] = 0
+            name = get_element_symbol(nel, symbol_map)
+            print(f"Note{f' ({label})' if label else ''}: {name} ({nel:.2f}): all its lines are saturated (COG slope < "
+                  f"COG_SLOPE_MIN): {np.count_nonzero(saturated)} line(s) used anyway")
+    return flags
 
 
 def _mean_valid(values: np.ndarray) -> float:
@@ -207,8 +278,8 @@ def star_abundance_rows(ID, nelem, abu, abu_mc, flag_line, param_errors=None, fe
     rows = []
     errors = param_errors is not None
     fe_errors = None
-    has_fe = 26.00 in nelem
-    if has_fe:
+    fe_row = None
+    if 26.00 in nelem:
         if errors:
             nlin, feh, sigma, s1, s2, s3, s4, flag_line, s_param, params_XH = extract_abu_fe(
                 nelem, abu, abu_mc, 26.00, flag_line, *param_errors, select_flag=select_flag, clip=clip)
@@ -217,8 +288,15 @@ def star_abundance_rows(ID, nelem, abu, abu_mc, flag_line, param_errors=None, fe
             nlin, feh, sigma, flag_line, s_param, params_XH = extract_abu_fe(nelem, abu, abu_mc, 26.00, flag_line,
                                                                              select_flag=select_flag, clip=clip)
             s1 = sigma
-        fe_row = (nlin, feh, sigma, s1, s_param, params_XH['abu_abs'], params_XH['s_tot'], params_XH['s_int'], params_XH['s_params'])
-    elif feh_model is not None:     # salvador without Fe I lines: the [M/H] of the model
+        # FIX (1.4.0): when all the Fe I lines are rejected (e.g. by their EW or COG slope), as without
+        # Fe I lines (before: [Fe/H] = 99.99 entered the [X/Fe], e.g. [Mg/Fe] = -100.51)
+        if nlin > 0:
+            fe_row = (nlin, feh, sigma, s1, s_param, params_XH['abu_abs'], params_XH['s_tot'], params_XH['s_int'], params_XH['s_params'])
+        else:
+            fe_errors = None
+    if fe_row is not None:
+        pass
+    elif feh_model is not None:     # salvador without (usable) Fe I lines: the [M/H] of the model
         feh = feh_model
         if errors:
             s1, fe_errors = 0.0, (0.0, 0.0, 0.0)
@@ -226,7 +304,7 @@ def star_abundance_rows(ID, nelem, abu, abu_mc, flag_line, param_errors=None, fe
         else:
             s1 = 99.99
             fe_row = (0, feh, 99.99, 99.99, 99.99, abu_absolute('Fe', feh, feh), 99.99, 99.99, 99.99)
-    else:                           # salvador-merge without Fe I lines: [Fe/H] not known
+    else:                           # salvador-merge without (usable) Fe I lines: [Fe/H] not known
         feh, s1 = None, 99.99
         fe_errors = (0.0, 0.0, 0.0) if errors else None
         fe_row = (0, 99.99, 99.99, 99.99, 99.99, 99.99, 99.99, 99.99, 99.99)

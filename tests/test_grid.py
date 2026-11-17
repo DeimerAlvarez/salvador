@@ -81,7 +81,7 @@ def test_merge_of_grid_results(tmp_path):
     # file and its plot must be created (before: "Axis limits cannot be NaN or Inf")
     shutil.copy(TESTS / 'data' / 'merge_grid' / '47Tuc_12272_up.fit', tmp_path)
     (tmp_path / 'tomerge.txt').write_text('47Tuc_12272_up.fit\nmerged.fit\n')
-    answers = 'tomerge.txt\n1\n0\n3\n0\n8\n-6\n-4.5\n'
+    answers = 'tomerge.txt\n1\n0\n3\n0\n8\n1\n-6\n-4.5\n'      # 1: selection by EWR (old file: no COG slope)
     proc = subprocess.run([sys.executable, '-m', 'salvador.merge_fit'], cwd=tmp_path, input=answers, text=True,
                           capture_output=True, env={**os.environ, 'MPLBACKEND': 'Agg'}, timeout=300)
     assert proc.returncode == 0
