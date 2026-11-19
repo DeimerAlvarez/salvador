@@ -57,9 +57,9 @@ def test_grid_errors_without_perturbed_synthetics(tmp_path):
     run = run_salvador(path, grid_case(path, errors='100 0.1 0.1'))
     assert run.returncode == 0, run.output
     fit = {r[1]: r for r in rows(path / f'{STAR}.fit')}
-    assert fit['7461.519'][10] == '99.99'                  # before: 0.00 (1.4.0: columns 8-10 -> 10-12)
-    assert fit['7711.721'][11] == '99.99'                  # Fe II: logg error
-    assert fit['7461.519'][11] == '99.99'                  # Fe I: logg error too (1.2.0)
+    assert fit['7461.519'][11] == '99.99'                  # before: 0.00 (1.4.0: columns 8-10 -> 10-12; SIGFIT: 11-13)
+    assert fit['7711.721'][12] == '99.99'                  # Fe II: logg error
+    assert fit['7461.519'][12] == '99.99'                  # Fe I: logg error too (1.2.0)
     assert 'Grid (Teff + 100 K): no synthetic spectra' in run.output
     fe = [r for r in rows(path / 'abundance_final.txt') if r[1] == '26.00'][0]
     assert fe[6] == '99.99'                                # E_PARAM not available
@@ -69,9 +69,9 @@ def test_grid_errors_from_perturbed_synthetics(tmp_path):
     path = tmp_path / 'run'
     run = run_salvador(path, grid_case(path, errors='100 0 0', perturbed_teff=100))
     assert run.returncode == 0, run.output
-    d_teff = [float(r[10]) for r in rows(path / f'{STAR}.fit') if r[3] != '99.99']
+    d_teff = [float(r[11]) for r in rows(path / f'{STAR}.fit') if r[3] != '99.99']
     assert any(0 < d < 0.5 for d in d_teff), d_teff        # weaker lines: higher abundance (signed)
-    assert all(r[11] == '0.00' and r[12] == '0.00' for r in rows(path / f'{STAR}.fit') if r[3] != '99.99')
+    assert all(r[12] == '0.00' and r[13] == '0.00' for r in rows(path / f'{STAR}.fit') if r[3] != '99.99')
 
 
 # ------------------------------------------------------------------ 2) names of the synthetics
@@ -192,8 +192,8 @@ def test_rejected_line_has_error_columns_and_merges(tmp_path):
     run = run_salvador(path, grid_case(path, errors='100 0.1 0.1', INTER='y'), answers='y\nr\n' + 'y\n' * 30)
     assert run.returncode == 0, run.output
     result = rows(path / f'{STAR}.fit')
-    assert all(len(r) == 14 for r in result)         # 1.4.0: + EWR and SLOPE
-    assert result[1][1] == '7489.578' and result[1][3] == '99.99' and result[1][10:13] == ['99.99'] * 3
+    assert all(len(r) == 15 for r in result)         # 1.4.0: + EWR and SLOPE; + SIGFIT
+    assert result[1][1] == '7489.578' and result[1][3] == '99.99' and result[1][11:14] == ['99.99'] * 3
     (path / 'list.txt').write_text(f'{STAR}.fit\nmerged.fit\n')
     proc = subprocess.run([sys.executable, '-m', 'salvador.merge_fit', 'list.txt', '--solar', '1', '--flags', 'keep'],
                           cwd=path, capture_output=True, text=True, env=ENV_MPL, timeout=300)

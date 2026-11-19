@@ -32,8 +32,9 @@ from .parallel import cleanup_parallel_work, ensure_models, init_parallel_worker
 from .plotting import fe_diagnostic_plot
 from .rotation import check_rotat_settings
 from .spectra_io import cleaning_tmp_files, model_name_codes, read_spec, select_grid_synthetics
-from .summary import (FLAG_SLOPE, describe_ew_selection, ew_selection_flag, extract_abu_isor, reduced_ew,
-                      slope_available, star_abundance_rows, use_saturated_species)
+from .summary import (FLAG_SIGMA, FLAG_SLOPE, SATURATION_SLOPE, describe_ew_selection, ew_selection_flag,
+                      extract_abu_isor, reduced_ew, saturation_check, sigma_available, slope_available,
+                      star_abundance_rows, use_saturated_species)
 
 ###
 ### ANALYSIS OF ONE LINE
@@ -206,15 +207,24 @@ def _analyse_line(task):
         EP = results['EP']
         loggf = results['loggf']
         slope = results.get('slope', 99.999)
-        rec.update(Abu=Abu, ew=ew, emc=emc, EP=EP, loggf=loggf, slope=slope, ewr=reduced_ew(ew, line))
+        sigma_fit = results.get('sigma_fit', 99.999)
+        rec.update(Abu=Abu, ew=ew, emc=emc, EP=EP, loggf=loggf, slope=slope, sigma_fit=sigma_fit, ewr=reduced_ew(ew, line))
 
-        # NEW (1.4.0): selection by the strength of the line: EWR_MIN and the slope of the curve of
-        # growth (COG_SLOPE_MIN, flag -4), or EWR_MIN and EWR_MAX when EWR_MAX is given (flag -1)
+        # NEW (1.4.0): selection by the strength of the line: EWR_MIN and EWR_MAX (EWR_MAX_DEFAULT
+        # for the very strong lines when EWR_MAX is not given, flag -1), the sensitivity of the
+        # profile to the abundance (NEW: SIGMA_FIT_MAX, flag -5) and, if given, the slope of the
+        # curve of growth (COG_SLOPE_MIN, flag -4)
         if Abu != 99.99 and not tana.startswith(('ROTAT', 'MOLEC', 'ABU2', 'ISOR')):
             ewr_min, ewr_max, slope_min = cfg.ew_selection()
-            flag_ew = ew_selection_flag(ew, line, slope, ewr_min, ewr_max, slope_min)
+            sigma_max = cfg.sigma_selection()
+            flag_ew = ew_selection_flag(ew, line, slope, ewr_min, ewr_max, slope_min, sigma_fit, sigma_max)
             if flag_ew:
                 rec['flag'] = flag_ew
+            if flag_ew == FLAG_SIGMA:
+                print(f'Line {line:.3f}: error from the noise of the profile {sigma_fit:.3f} > SIGMA_FIT_MAX = {sigma_max:.2f} dex: '
+                      'not used for the abundances (flag -5)')
+            if sigma_max is not None and not sigma_available(sigma_fit):
+                print(f'Note: line {line:.3f}: no error from the noise of the profile (SNR not measured): SIGMA_FIT_MAX not used for this line')
             if flag_ew == FLAG_SLOPE:
                 print(f'Line {line:.3f}: COG slope {slope:.3f} < COG_SLOPE_MIN = {slope_min:.2f}: not used for the abundances (flag -4)')
             if slope_min is not None and ew != 99.99 and not slope_available(slope):
@@ -303,6 +313,22 @@ def _analyse_line(task):
     return rec
 
 
+def print_saturation_check(name_star, nelem, abu, slope, flag_line) -> None:
+    """NEW: for Fe I, mean abundance of the saturated lines (COG slope < SATURATION_SLOPE) minus
+    that of the other usable lines (flag 0 or -4, before the sigma-clipping), with its error (see
+    summary.saturation_check). Printed only with at least two lines in each group."""
+    usable = (np.asarray(nelem, dtype=float) == 26.00) & np.isin(flag_line, (0, FLAG_SLOPE))
+    check = saturation_check(np.asarray(abu, dtype=float)[usable], np.asarray(slope, dtype=float)[usable])
+    if check is None:
+        return
+    n_sat, n_other, diff, err = check
+    print(f'Check ({name_star}): Fe I lines with COG slope < {SATURATION_SLOPE:.2f} ({n_sat}) minus the others ({n_other}): '
+          f'{diff:+.2f} +- {err:.2f} dex')
+    if abs(diff) > 2 * err:
+        print('  The saturated lines give a different abundance: check the microturbulence (a too high vt gives '
+              'lower abundances from them) or use COG_SLOPE_MIN to reject them.')
+
+
 def write_line_result(rec, abu_file, abu_file_isor, flags, kept):
     """Write the results of one line, exactly as the former loop did."""
     kept.append(not rec['skipped'])
@@ -316,12 +342,14 @@ def write_line_result(rec, abu_file, abu_file_isor, flags, kept):
         Abu, ew, EP, loggf, emc = rec['Abu'], rec['ew'], rec['EP'], rec['loggf'], rec['emc']
         if tana != 'ISOR':
             # NEW (1.4.0): EWR and SLOPE (slope of the curve of growth from K2) after EW
-            ewr, slope = rec.get('ewr', 99.99), rec.get('slope', 99.999)
+            # NEW: SIGFIT (error of the abundance due to the noise of the profile) after SLOPE
+            ewr, slope, sigma = rec.get('ewr', 99.99), rec.get('slope', 99.999), rec.get('sigma_fit', 99.999)
             ewr_txt = '99.99' if ewr == 99.99 else f"{ewr:.2f}"
             slope_txt = f"{slope:.3f}" if slope_available(slope) else '99.999'
+            sigma_txt = f"{sigma:.3f}" if sigma_available(sigma) else '99.999'
             with open(abu_file, 'a') as f:
                 f.write(f"{name_star:<30}  {line:>8.3f}  {nelem:>5.2f}  {Abu:>5.2f}  {ew:>6.2f}  {ewr_txt:>6}  {slope_txt:>6}  "
-                        f"{EP:>6.3f}  {loggf:>6.3f}  {emc:>5.2f}\n")
+                        f"{sigma_txt:>6}  {EP:>6.3f}  {loggf:>6.3f}  {emc:>5.2f}\n")
         elif tana == 'ISOR':
             with open(abu_file_isor, 'a') as f:
                 f.write(f"{name_star:<30}  {line:>8.3f}  {nelem:>5.2f}  {_isor_txt(Abu, 5)}  {_isor_txt(emc, 3)}\n")
@@ -454,7 +482,7 @@ def run() -> None:
 
     print('')
     # NEW (1.4.0): how the lines are selected by their strength
-    print('Selection of the lines by their strength: ' + describe_ew_selection(*cfg.ew_selection()))
+    print('Selection of the lines: ' + describe_ew_selection(*cfg.ew_selection(), cfg.sigma_selection()))
     print('')
 
     ###
@@ -609,7 +637,7 @@ def run() -> None:
 
         abu_file = name_star+'.fit'
         with open(abu_file,'w') as f:
-            f.write(fit_file_header(describe_ew_selection(*cfg.ew_selection())))
+            f.write(fit_file_header(describe_ew_selection(*cfg.ew_selection(), cfg.sigma_selection())))
 
         # star_rot.fit is created at the first ROTAT line; remove the one of a previous run
         if os.path.exists(name_star + '_rot.fit'):
@@ -752,6 +780,7 @@ def run() -> None:
         if check_if_has_data(abu_file, '#SPECTRUM'):
             ID, nelem, abu, abu_mc, other_nelems, df = read_fit_file(count_header_cols(abu_file), col_names_base, col_names_err, abu_file)  # FIX: column count from the file header
             flag_line = use_saturated_species(nelem, flag_line, label=name_star)      # NEW (1.4.0)
+            print_saturation_check(name_star, nelem, abu, df['slope'].values, flag_line)  # NEW
             param_errors = (df['abu_pT'].values, df['abu_pg'].values, df['abu_pv'].values) if 'abu_pT' in df.columns else None
             # rows of [Fe/H] and [X/Fe] (same function as salvador-merge); without Fe I lines the
             # [M/H] of the model is used as [Fe/H]

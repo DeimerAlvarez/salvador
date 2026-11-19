@@ -45,10 +45,10 @@ def configure_warnings() -> None:
 # --------------- important values
 c = 299792.458  # speed of light in km/s
 # NEW (1.4.0): largest reduced EW, log(EW/lambda), of the lines used for the abundances when
-# EWR_MAX is not given in input.salvador. With the COG slope (COG_SLOPE_MIN) it only removes the
-# very strong lines, whose slope rises again in the damping part of the curve of growth (S = 0.4-0.5
-# at EW ~ 450-700 mA); with a grid of synthetics (PATH_SYN: no slope) it is the EWR_MAX used.
-# Change this value to change that limit.
+# EWR_MAX is not given in input.salvador. It removes the very strong lines, dominated by the
+# damping wings (with COG_SLOPE_MIN: whose slope rises again in the damping part of the curve of
+# growth, S = 0.4-0.5 at EW ~ 450-700 mA); with a grid of synthetics (PATH_SYN) it is the EWR_MAX
+# used. Change this value to change that limit.
 EWR_MAX_DEFAULT = -4.4
 ksize = 101 # kernel size for the median filter used to find the continuum points in the spectrum.
 init_ans = 'zzz'
@@ -75,7 +75,8 @@ KEYWORDS = {
     'CALC_BEST':    ('calc_best',      str,   'y'),     # y = compute the +-0.2 dex synthetics for the plot
     'EWR_MIN':      ('ewr_min',        float, -6.0),    # minimum reduced EW, log(EW/lambda)
     'EWR_MAX':      ('ewr_max',        float, None),    # maximum reduced EW; if given, it replaces COG_SLOPE_MIN (1.4.0)
-    'COG_SLOPE_MIN': ('cog_slope_min', float, 0.35),    # minimum slope of the curve of growth (K2), when EWR_MAX is not given
+    'COG_SLOPE_MIN': ('cog_slope_min', float, None),    # minimum slope of the curve of growth (K2), when EWR_MAX is not given (optional)
+    'SIGMA_FIT_MAX': ('sigma_fit_max', float, 0.20),    # largest error [dex] of the abundance from the noise of the profile (0 = not used)
     'EP_MIN':       ('ep_min',         float, 0.0),     # minimum excitation potential [eV]
     'EP_MAX':       ('ep_max',         float, 10.0),    # maximum excitation potential [eV]
     'VERBOSE':      ('verbose',        int,   0),       # 0 or 1
@@ -109,7 +110,8 @@ class Config:
     calc_best: str = 'y'
     ewr_min: float = -6.0
     ewr_max: Optional[float] = None
-    cog_slope_min: float = 0.35
+    cog_slope_min: Optional[float] = None
+    sigma_fit_max: float = 0.20
     ep_min: float = 0.0
     ep_max: float = 10.0
     verbose: int = 0
@@ -142,14 +144,20 @@ class Config:
         (minimum EWR, maximum EWR, minimum COG slope or None).
 
         NEW (1.4.0): EWR_MAX given -> EWR_MIN and EWR_MAX, the slope is not used; otherwise
-        EWR_MIN, COG_SLOPE_MIN and EWR_MAX_DEFAULT (only against the very strong lines). With a grid
-        of synthetics (no slope): EWR_MIN and EWR_MAX (EWR_MAX_DEFAULT if not given).
+        EWR_MIN, EWR_MAX_DEFAULT (only against the very strong lines) and COG_SLOPE_MIN if given
+        (None by default since the profile sensitivity, SIGMA_FIT_MAX). With a grid of synthetics
+        (no slope): EWR_MIN and EWR_MAX (EWR_MAX_DEFAULT if not given).
         """
         if self.ewr_max is not None:
             return self.ewr_min, self.ewr_max, None
         if self.grid == 'y':
             return self.ewr_min, EWR_MAX_DEFAULT, None
         return self.ewr_min, EWR_MAX_DEFAULT, self.cog_slope_min
+
+    def sigma_selection(self) -> Optional[float]:
+        """NEW: largest error of the abundance due to the noise of the profile (SIGMA_FIT_MAX, see
+        fitting.profile_sigma); None if SIGMA_FIT_MAX = 0 (not used)."""
+        return self.sigma_fit_max if self.sigma_fit_max > 0 else None
 
 
 VMAC_NAMES = ('VF05', 'D14', 'B16', 'C08')     # relations of rotation.VMAC_RELATIONS
@@ -196,7 +204,7 @@ def load_config(path='input.salvador'):
     values = {}
     for key, (field, convert, default) in KEYWORDS.items():
         if key not in raw:
-            if default is None and key not in ('PATH_SYN', 'ROT_VMAC', 'ROT_VMAC_ERR', 'EWR_MAX'):    # optional, default None
+            if default is None and key not in ('PATH_SYN', 'ROT_VMAC', 'ROT_VMAC_ERR', 'EWR_MAX', 'COG_SLOPE_MIN'):    # optional, default None
                 sys.exit(f"Error: mandatory keyword '{key}' not found in {path}!")
             values[field] = default
             continue
@@ -226,8 +234,10 @@ def load_config(path='input.salvador'):
         sys.exit(f"Error: ROT_UL_FWHM cannot be negative in {path} (found {cfg.rot_ul_fwhm})")
     if cfg.rot_step <= 0:
         sys.exit(f"Error: ROT_STEP must be positive in {path} (found {cfg.rot_step})")
-    if cfg.cog_slope_min < 0:
+    if cfg.cog_slope_min is not None and cfg.cog_slope_min < 0:
         sys.exit(f"Error: COG_SLOPE_MIN cannot be negative in {path} (found {cfg.cog_slope_min})")
+    if cfg.sigma_fit_max < 0:
+        sys.exit(f"Error: SIGMA_FIT_MAX cannot be negative in {path} (found {cfg.sigma_fit_max})")
     if cfg.ewr_max is not None and cfg.ewr_max <= cfg.ewr_min:
         sys.exit(f"Error: EWR_MAX ({cfg.ewr_max}) must be larger than EWR_MIN ({cfg.ewr_min}) in {path}")
     return cfg

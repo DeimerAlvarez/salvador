@@ -1,5 +1,52 @@
 # Changelog
 
+## 1.5.0
+
+### Added
+
+* Selection of the lines by the sensitivity of their profile to the abundance: keyword
+  `SIGMA_FIT_MAX` (default 0.20 dex; 0 = not used). For each line salvador computes the error of the
+  abundance due to the noise of the profile, sigma_fit = (1/SNR) / sqrt(sum_i (dF_i/dA)^2), from the
+  synthetics at the best abundance +- 0.2 dex (K2, with `CALC_BEST = y`; otherwise those of the fit,
+  interpolated in abundance) on the pixels of the chi2 region, and the SNR measured near the line. A
+  line with sigma_fit > `SIGMA_FIT_MAX` is not used for the abundances (new flag -5, REJ. PROFILE
+  SENSITIVITY): its profile hardly changes with the abundance. It works also with a grid of
+  synthetics. It is applied to the lines of `ABU`, `ABU_GF`, and `ABUF`, as the other selections.
+* `.fit` files: new column `SIGFIT` (sigma_fit, 99.999 when not available) after `SLOPE`, the flag
+  -5 and the selection in the header. The files of the previous versions are still read and merged.
+* For Fe I, salvador prints the mean abundance of the saturated lines (COG slope < 0.35) minus that
+  of the other usable lines, with its error, and a warning when they differ by more than twice the
+  error: the saturated lines are more sensitive to the microturbulence and to the damping.
+* `salvador-merge`: `--sigma-fit-max` (default 0.20, 0 = not used) for `--flags recalc`;
+  `--slope-min 0` (or 0 as the answer) does not use the COG slope.
+
+### Changed
+
+* `COG_SLOPE_MIN` is optional, without default (before: 0.35): the saturated lines whose profile
+  still changes with the abundance are used. In a giant of M54 (Teff 4248 K, logg 0.77, [M/H]
+  -1.54, R = 18000, HR18) the six Fe I lines rejected by the slope in 1.4.0 (S = 0.20-0.30) have
+  sigma_fit = 0.012-0.017 dex, as the unsaturated ones: their core still changes by ~0.05 (about 10
+  times the noise) for +-0.2 dex. They give an abundance lower by 0.16 +- 0.07 dex than the other lines
+  (a sign of a slightly too high vt, or of the damping): the new check prints it. With
+  `COG_SLOPE_MIN = 0.35` the selection of 1.4.0 is obtained (plus `SIGMA_FIT_MAX`).
+
+### Fixed
+
+* SNR near a line (used by the Monte Carlo errors and by sigma_fit): DER_SNR (Stoehr et al. 2008),
+  the median flux divided by the noise from the median of |2 f_i - f_(i-2) - f_(i+2)|, within each
+  continuum window with `NORM = 2`, and on the flux within +-20 A with the other normalizations (or
+  when no window is within +-20 A); the mean/std of the 3-sigma-clipped pixels only with fewer than
+  10 differences. Before: the mean/std of the pixels, so a bad pixel or a structure in a window (a
+  weak line, a wave of the normalization), or the lines within +-20 A with the other
+  normalizations, gave a much lower SNR, hence larger Monte Carlo errors and sigma_fit. The
+  abundances do not change. In the M54 giant the SNR goes from 110-160 to 175-250 (from 23 to 150
+  at 7852-7855 A: Monte Carlo error of Ti I 7852 from 0.09 to 0.01 dex). In the PEPSI giant 1r of
+  NGC 6749 the window 8779.7-8789.8 A holds a structure (flux 0.70-1.15) and the SNR of Fe I 8793
+  goes from 9.5 to 79 (sigma_fit from 0.26 to 0.03 dex: the line is used). In the test cases ISOR
+  (CS 29497-034, `NORM = 2`) and ABU2 (`NORM = 1`) the SNR goes from 4 to 50 and from 33 to 146.
+  The noise is assumed uncorrelated beyond 2 pixels: in strongly oversampled spectra the SNR is
+  overestimated.
+
 ## 1.4.0
 
 Needs the version of K2 of November 2026 (or later): its `eqw` writes in `info_ew.txt` the slope

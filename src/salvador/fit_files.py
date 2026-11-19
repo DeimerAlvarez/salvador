@@ -4,9 +4,9 @@ import numpy as np
 import pandas as pd
 
 # columns of the .fit file (names used when it is read back; with the parameter errors they are
-# followed by abu_pT, abu_pg, abu_pv). NEW (1.4.0): ewr and slope.
-FIT_COLS = ('ID', 'line', 'nelem', 'abu', 'ew', 'ewr', 'slope', 'EP', 'loggf', 'abu_mc')
-FIT_HEADER_NAMES = '#SPECTRUM                           LINE   ELEM    ABU      EW     EWR   SLOPE      EP  log_gf    eMC'
+# followed by abu_pT, abu_pg, abu_pv). NEW (1.4.0): ewr and slope; NEW: sigma_fit (SIGFIT).
+FIT_COLS = ('ID', 'line', 'nelem', 'abu', 'ew', 'ewr', 'slope', 'sigma_fit', 'EP', 'loggf', 'abu_mc')
+FIT_HEADER_NAMES = '#SPECTRUM                           LINE   ELEM    ABU      EW     EWR   SLOPE  SIGFIT      EP  log_gf    eMC'
 
 
 def fit_file_header(selection: str) -> str:
@@ -18,15 +18,17 @@ def fit_file_header(selection: str) -> str:
             '#   FLAG = -2  (REJ. E.P.)\n'
             '#   FLAG = -3  (REJ. ABU)\n'
             '#   FLAG = -4  (REJ. COG SLOPE)\n'
+            '#   FLAG = -5  (REJ. PROFILE SENSITIVITY)\n'
             f'#   SELECTION: {selection}\n'
             '#   EWR = log(EW/lambda); SLOPE = d log(EW/lambda) / d A(X) from K2 (99.999 = not available)\n'
+            '#   SIGFIT = error of ABU due to the noise of the profile [dex] (99.999 = not available)\n'
             '#' + '-' * 39 + '\n'
             + FIT_HEADER_NAMES + '\n')
 
 
 # names of the header of the .fit files (all versions) -> names of the columns in salvador
 HEADER_TO_COL = {'SPECTRUM': 'ID', 'LINE': 'line', 'ELEM': 'nelem', 'ABU': 'abu', 'EW': 'ew', 'EWR': 'ewr',
-                 'SLOPE': 'slope', 'EP': 'EP', 'log_gf': 'loggf', 'eMC': 'abu_mc',
+                 'SLOPE': 'slope', 'SIGFIT': 'sigma_fit', 'EP': 'EP', 'log_gf': 'loggf', 'eMC': 'abu_mc',
                  'd_Teff': 'abu_pT', 'd_logg': 'abu_pg', 'd_vt': 'abu_pv', 'flag_line': 'flag'}
 OLD_FIT_COLS = ('ID', 'line', 'nelem', 'abu', 'ew', 'EP', 'loggf', 'abu_mc')     # before 1.4.0
 ERR_COLS = ('abu_pT', 'abu_pg', 'abu_pv')
@@ -78,6 +80,7 @@ def read_fit_rows(fit_file) -> tuple[list[dict[str, str]], bool]:
                 ewr = 99.99
             row['ewr'] = '99.99' if ewr == 99.99 else f'{ewr:.2f}'
         row.setdefault('slope', '99.999')
+        row.setdefault('sigma_fit', '99.999')     # NEW: not in the files before this version
         rows.append({col: row[col] for col in FIT_COLS + ERR_COLS + ('flag',)})
     return rows, has_errors
 

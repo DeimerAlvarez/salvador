@@ -32,6 +32,36 @@ def interp_in_abundance(abu_new, abu, spectra):
     return slope * (abu_new - abu[j])[:, None] + spectra[j]
 
 
+MISSING_SIGMA = 99.999      # profile error not available (as summary.MISSING_SIGMA)
+SIGMA_STEP = 0.2            # dex: synthetics at the best abundance +- SIGMA_STEP (as CALC_BEST)
+DER_SNR_NOISE = 1.482602 / np.sqrt(6.0)     # noise / median |2 f_i - f_(i-2) - f_(i+2)| (Gaussian noise)
+MIN_DER_PIXELS = 10         # second differences needed by der_snr
+
+
+def profile_sigma(dflux: np.ndarray, step: float, snr: float) -> float:
+    """NEW: error of the abundance of a line due to the noise of its profile [dex].
+
+    sigma_fit = (1 / SNR) / sqrt(sum_i (dF_i / dA)^2), with dF_i / dA = dflux_i / (2 step) on the
+    observed pixels of the chi2 region: the smallest error of the abundance from the profile fit
+    for white noise (Cramer-Rao bound). It measures how much the profile changes with the abundance
+    with respect to the noise: a saturated line whose core still changes is precise, a line whose
+    profile hardly changes is not, whatever its EW.
+
+    Args:
+        dflux: F(A + step) - F(A - step) on the observed pixels of the chi2 region.
+        step: Half of the abundance difference of the two synthetics [dex].
+        snr: Signal-to-noise ratio near the line.
+
+    Returns:
+        sigma_fit [dex], or MISSING_SIGMA if the SNR is not available or the profile does not change.
+    """
+    dflux = np.asarray(dflux, dtype=float)
+    norm = float(np.sqrt(np.sum((dflux / (2 * step)) ** 2))) if step > 0 else 0.0
+    if not (np.isfinite(snr) and snr > 0) or not np.isfinite(norm) or norm == 0:
+        return MISSING_SIGMA
+    return float((1.0 / snr) / norm)
+
+
 def gaussian(x, aux):
     """Gaussian profile on a continuum: aux = (height, center, width (sigma), offset)."""
     height, center, width, offset = aux
@@ -312,13 +342,54 @@ def convolve_gauss2(wave_syn, syn, res):
     return bbb
 
 
+def der_snr(segments: Sequence[np.ndarray]) -> float:
+    """Signal-to-noise ratio of the flux of one or more contiguous segments (DER_SNR, Stoehr et al.
+    2008, ADASS XVII, ASP Conf. Ser.; ST-ECF Newsletter 42).
+
+    Signal: median flux of all the pixels. Noise: 1.482602 / sqrt(6) * median of
+    |2 f_i - f_(i-2) - f_(i+2)| within each segment. The second differences cancel a continuum that
+    is linear over 5 pixels, and the medians ignore bad pixels and spikes as long as they affect
+    less than about half of the differences. Pixels two apart are used, so noise correlated between
+    adjacent pixels (resampled spectra) is not underestimated; noise correlated over more pixels
+    (strongly oversampled spectra) is, and the SNR is then overestimated.
+
+    Args:
+        segments: Flux of each contiguous segment (e.g. one per continuum window).
+
+    Returns:
+        The signal-to-noise ratio, or NaN with fewer than MIN_DER_PIXELS differences (segments
+        shorter than 5 pixels give none) or a zero noise.
+    """
+    diffs = [np.abs(2 * s[2:-2] - s[:-4] - s[4:]) for s in segments if s.size >= 5]
+    diffs = np.concatenate(diffs) if diffs else np.empty(0)
+    if diffs.size < MIN_DER_PIXELS:
+        return float('nan')
+    noise = DER_SNR_NOISE * np.median(diffs)
+    if not noise > 0:
+        return float('nan')
+    return float(np.median(np.concatenate(segments)) / noise)
+
+
+def _clipped_snr(flux: np.ndarray) -> float:
+    """Mean/std of the 3-sigma-clipped flux; NaN if fewer than 2 pixels remain or std = 0."""
+    sel = sigma_clip(flux, sigma=3, maxiters=5).compressed()
+    if sel.size < 2 or np.std(sel) == 0:
+        return float('nan')
+    return float(np.mean(sel) / np.std(sel))
+
+
 def _estimate_snr(wave: np.ndarray, flux: np.ndarray, line: float,
                   wv_left: Sequence[float], wv_right: Sequence[float]) -> float:
     """SNR within +-20 A of the line.
 
-    NORM = 2: mean/std of the pixels inside the continuum windows (as before). If no window pixel
-    is within +-20 A (before: SNR = NaN, hence a Monte Carlo error of exactly 0), and for NORM != 2:
-    mean/std of the 3-sigma-clipped flux within +-20 A. NaN if fewer than 2 pixels remain.
+    NORM = 2: DER_SNR (der_snr) of the pixels inside the continuum windows, each window a separate
+    segment (FIX: before, mean/std of the window pixels, 3-sigma-clipped in 1.5.0: a smooth
+    structure in a window, such as a weak line or a wave of the normalization, still gave a much
+    lower SNR, e.g. 9.5 instead of ~85, hence wrong sigma_fit and Monte Carlo errors). If the
+    windows give fewer than MIN_DER_PIXELS differences: mean/std of their clipped pixels. If no
+    window pixel is within +-20 A, and for NORM != 2 (before: mean/std of the clipped flux, lowered
+    by the lines): DER_SNR of the flux within +-20 A, or mean/std of the clipped flux if too few
+    pixels. NaN if none can be computed.
 
     Args:
         wave: Observed wavelengths [A].
@@ -332,17 +403,17 @@ def _estimate_snr(wave: np.ndarray, flux: np.ndarray, line: float,
     """
     near = (wave > line - 20) & (wave < line + 20)
     if cfg.type_norm == 2 and len(wv_left) > 0:
-        in_windows = np.zeros(wave.size, dtype=bool)
-        for left, right in zip(wv_left, wv_right):
-            in_windows |= (wave > left) & (wave < right)
-        sel = flux[near & in_windows]
-        if sel.size >= 2 and np.std(sel) > 0:
-            return float(np.mean(sel) / np.std(sel))
-        warnings.warn(f'no continuum window within +-20 A of {line:.3f}: SNR from the sigma-clipped flux', stacklevel=2)
-    sel = sigma_clip(flux[near], sigma=3, maxiters=5).compressed()
-    if sel.size < 2 or np.std(sel) == 0:
-        return float('nan')
-    return float(np.mean(sel) / np.std(sel))
+        segments = [flux[near & (wave > left) & (wave < right)] for left, right in zip(wv_left, wv_right)]
+        segments = [s for s in segments if s.size > 0]
+        if segments:
+            snr = der_snr(segments)
+            if not np.isfinite(snr):
+                snr = _clipped_snr(np.concatenate(segments))
+            if np.isfinite(snr):
+                return snr
+        warnings.warn(f'no continuum window within +-20 A of {line:.3f}: SNR from the flux within +-20 A', stacklevel=2)
+    snr = der_snr([flux[near]])
+    return snr if np.isfinite(snr) else _clipped_snr(flux[near])
 
 
 def abu_determination(spec, fit1, fit2, wl_syn, fl_syn_br, abu, line, elem, ans, wv_left, wv_right, param1, save='y', window=None, **kwargs):
@@ -350,7 +421,9 @@ def abu_determination(spec, fit1, fit2, wl_syn, fl_syn_br, abu, line, elem, ans,
     fit region (fit1-fit2, plus the second region of ABU2), fine grid in steps of 0.01 dex by
     interpolation, minimum. Also the EW of the best fit and the SNR near the line. With
     ans = 'y' (final fit, plot saved) the best-fit and +-0.2 dex synthetics are computed with K2.
-    Returns (abundance, EW, SNR, chi2 of the fine grid, inputs for the Monte Carlo, data for the plot)."""
+    Returns (abundance, EW, SNR, chi2 of the fine grid, inputs for the Monte Carlo, data for the plot).
+    NEW: the data for the plot also hold 'sigma_fit', the error of the abundance due to the noise of
+    the profile (profile_sigma; 99.999 if not available)."""
     if window is None:      # window of the line (passed by measure_line)
         window = cfg.window
     fit11 = kwargs.get('wind_l1')
@@ -551,6 +624,23 @@ def abu_determination(spec, fit1, fit2, wl_syn, fl_syn_br, abu, line, elem, ans,
             chis_plot = np.sum((fity - grid_plot) ** 2 / grid_plot, axis=1)
 
 
+    ### NEW: error of the abundance due to the noise of the profile (selection SIGMA_FIT_MAX). From
+    ### the K2 synthetics at abu_fin +- 0.2 dex when they were computed (CALC_BEST = y), otherwise
+    ### from the synthetics of the fit interpolated in abundance (as in the chi2) at +- 0.2 dex
+    ### within their range. Not for ISOR (the variable is an isotopic ratio).
+    sigma_fit = MISSING_SIGMA
+    if type_abu != 'ISOR':
+        if do_best and cfg.calc_best == 'y':
+            (_, w_lo, f_lo), _, (_, w_hi, f_hi) = around_best
+            dflux = (np.interp(fitx, np.asarray(getattr(w_hi, 'value', w_hi)), np.asarray(getattr(f_hi, 'value', f_hi)))
+                     - np.interp(fitx, np.asarray(getattr(w_lo, 'value', w_lo)), np.asarray(getattr(f_lo, 'value', f_lo))))
+            sigma_fit = profile_sigma(dflux, SIGMA_STEP, SNR)
+        else:
+            lo, hi = np.clip([abu_fin - SIGMA_STEP, abu_fin + SIGMA_STEP], abu[0], abu[-1])
+            if hi > lo:
+                f_lo, f_hi = interp_in_abundance(np.array([lo, hi]), abu, ss_fitx)
+                sigma_fit = profile_sigma(f_hi - f_lo, (hi - lo) / 2, SNR)
+
     ###
     wl_syn2 = wl_best.value if do_best else wl_syn2
     fake = fl_best.value if do_best else fake
@@ -559,7 +649,7 @@ def abu_determination(spec, fit1, fit2, wl_syn, fl_syn_br, abu, line, elem, ans,
     "xspec": norm_dop2.spectral_axis, "yspec": norm_dop2.flux,
     "fit1": fit1, "fit2": fit2, "line": line, "abund": abu3_plot, "chi": chis_plot,
     "abu_fin": abu_fin, "elem": elem, "wv_left": wv_left, "wv_right": wv_right,
-    "window": window, "type_norm": cfg.type_norm, "type_abu": type_abu}
+    "window": window, "type_norm": cfg.type_norm, "type_abu": type_abu, "sigma_fit": sigma_fit}
 
     if fit11 is not None:
         plot_data['fit1_new'] = fit11

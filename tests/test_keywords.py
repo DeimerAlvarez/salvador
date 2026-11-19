@@ -73,12 +73,13 @@ def test_parameter_errors_in_fit_file(runs):
     fit = runs('ABU2').path / 'star10uc.fit'
     header = [r for r in fit.read_text().splitlines() if r.startswith('#SPECTRUM')][0]
     assert 'd_Teff' in header and 'd_logg' in header and 'd_vt' in header
-    assert all(len(r) == 14 for r in rows(fit))             # 1.4.0: + EWR and SLOPE
+    assert all(len(r) == 15 for r in rows(fit))             # 1.4.0: + EWR and SLOPE; + SIGFIT
 
 
 def test_molecules_have_no_ew(runs):
     row = rows(runs('MOLEC').path / 'M54_LR2_1500138_norm_rvc.fit')[0]
-    assert row[4:9] == ['99.99', '99.99', '99.999', '99.999', '99.999']    # EW, EWR, SLOPE, EP, log gf
+    assert row[4:7] + row[8:10] == ['99.99', '99.99', '99.999', '99.999', '99.999']    # EW, EWR, SLOPE, EP, log gf
+    assert 0 < float(row[7]) < 1          # SIGFIT: the profile error is known also for a molecule (not used to select)
 
 
 def test_rotat_without_vmac_stops_before_k2(tmp_path):

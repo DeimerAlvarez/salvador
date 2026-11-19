@@ -4,7 +4,7 @@ import warnings
 import numpy as np
 import pytest
 
-from salvador.fitting import _estimate_snr, abu_mc_line, gaussian, gaussian_cf, interp_in_abundance, mc_seed
+from salvador.fitting import _estimate_snr, abu_mc_line, der_snr, gaussian, gaussian_cf, interp_in_abundance, mc_seed
 from salvador.normalization import find_clipped_regions, load_cw_regions, norm2
 from salvador.summary import extract_abu, extract_abu_fe, extract_abu_isor, get_coeffs
 
@@ -41,8 +41,8 @@ def flat_spectrum():
 def test_snr_from_continuum_windows(settings, flat_spectrum):
     wave, flux = flat_spectrum
     left, right = np.array([7450.0, 7480.0, 7700.0]), np.array([7452.0, 7483.0, 7702.0])
-    near = (wave > 7450) & (wave < 7490) & (((wave > 7450) & (wave < 7452)) | ((wave > 7480) & (wave < 7483)))
-    assert _estimate_snr(wave, flux, 7470.0, left, right) == pytest.approx(np.mean(flux[near]) / np.std(flux[near]))
+    segments = [flux[(wave > 7450) & (wave < 7452)], flux[(wave > 7480) & (wave < 7483)]]   # 7700: > 20 A away
+    assert _estimate_snr(wave, flux, 7470.0, left, right) == pytest.approx(der_snr(segments))
 
 
 def test_snr_without_windows_near_the_line(settings, flat_spectrum):

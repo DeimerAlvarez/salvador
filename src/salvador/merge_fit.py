@@ -42,7 +42,8 @@ SOLAR_REFERENCES = {1: 'CL', 2: 'GS98', 3: 'Magg22', 4: 'Asp09'}
 
 COLS_BASE = list(FIT_COLS)         # NEW (1.4.0): with EWR and SLOPE
 COLS_ERR = list(ERR_COLS)
-DEFAULT_SLOPE_MIN = 0.35            # as COG_SLOPE_MIN
+DEFAULT_SLOPE_MIN = 0.35            # example value of COG_SLOPE_MIN (optional in salvador)
+DEFAULT_SIGMA_MAX = 0.20            # as the default of SIGMA_FIT_MAX
 
 FINAL_HEADER = ('#STAR\t\t= name of the spectrum \n'
                 '#CODE\t\t= element code in kurucz format \n'
@@ -72,8 +73,10 @@ class MergeSettings:
         ewr_min: Minimum reduced EW, log(EW/lambda) (recalc only).
         ewr_max: Maximum reduced EW (recalc only; with slope_min it only removes the very strong
             lines, as EWR_MAX_DEFAULT in salvador).
-        slope_min: Minimum slope of the curve of growth (recalc only); None: selection by ewr_min
-            and ewr_max only (NEW 1.4.0, as EWR_MAX and COG_SLOPE_MIN in salvador).
+        slope_min: Minimum slope of the curve of growth (recalc only); None: not used (NEW 1.4.0,
+            as EWR_MAX and COG_SLOPE_MIN in salvador).
+        sigma_max: Largest error of the abundance due to the noise of the profile (recalc only;
+            NEW, as SIGMA_FIT_MAX in salvador); None: not used.
     """
     solar: int
     recalc: bool
@@ -81,13 +84,14 @@ class MergeSettings:
     ep: tuple[float, float] = (0.0, 10.0)
     ewr_min: float = -6.0
     ewr_max: float = EWR_MAX_DEFAULT
-    slope_min: float | None = DEFAULT_SLOPE_MIN
+    slope_min: float | None = None
+    sigma_max: float | None = DEFAULT_SIGMA_MAX
 
     def selection(self) -> str:
         """The selection of the lines by their strength, as written in the merged .fit file."""
         if not self.recalc:
             return 'flags of the merged .fit files (not recalculated)'
-        return describe_ew_selection(self.ewr_min, self.ewr_max, self.slope_min)
+        return describe_ew_selection(self.ewr_min, self.ewr_max, self.slope_min, self.sigma_max)
 
 
 def get_type_input(prompt: str, target_type: type, valid: Callable | None = None, hint: str = '') -> object:
@@ -106,22 +110,27 @@ def get_type_input(prompt: str, target_type: type, valid: Callable | None = None
 
 def _ask_strength_selection(args: argparse.Namespace, settings: MergeSettings) -> None:
     """Selection of the lines by their strength (recalc): from the command line, otherwise asked.
-    NEW (1.4.0): the COG slope (as COG_SLOPE_MIN, with EWR_MAX_DEFAULT against the very strong
-    lines) or the reduced EW only (as EWR_MAX)."""
+    NEW (1.4.0): EWR_MIN with EWR_MAX_DEFAULT against the very strong lines and, if given, the COG
+    slope (as COG_SLOPE_MIN; NEW: 0 = not used, the default of salvador), or the reduced EW only (as
+    EWR_MAX). NEW: the error due to the noise of the profile (as SIGMA_FIT_MAX) from
+    --sigma-fit-max (default DEFAULT_SIGMA_MAX, 0 = not used) in both cases."""
+    settings.sigma_max = args.sigma_fit_max if args.sigma_fit_max > 0 else None
     if args.ewr is not None:
         settings.ewr_min, settings.ewr_max = args.ewr
         settings.slope_min = None
         return
     if args.slope_min is None and args.ewr_min is None:
-        use_ewr = get_type_input('Reject the strong lines by the COG slope (0) or by a maximum EWR (1)?:  ', int,
+        use_ewr = get_type_input('Reject the strong lines by EWR <= {EWR_MAX_DEFAULT} and, if given, the COG slope (0) '
+                                 'or by a maximum EWR (1)?:  '.format(EWR_MAX_DEFAULT=EWR_MAX_DEFAULT), int,
                                  lambda v: v in (0, 1), 'choose 0 or 1.') == 1
         if use_ewr:
             settings.ewr_min, settings.ewr_max = _ask_range('EWR', '-6.0', str(EWR_MAX_DEFAULT))
             settings.slope_min = None
             return
     settings.ewr_min = args.ewr_min if args.ewr_min is not None else get_type_input('Insert EWR min (es. -6.0): ', float)
-    settings.slope_min = args.slope_min if args.slope_min is not None else get_type_input(
-        f'Insert COG slope min (es. {DEFAULT_SLOPE_MIN}): ', float, lambda v: v >= 0, 'the value cannot be negative.')
+    slope_min = args.slope_min if args.slope_min is not None else get_type_input(
+        f'Insert COG slope min (es. {DEFAULT_SLOPE_MIN}; 0 = not used): ', float, lambda v: v >= 0, 'the value cannot be negative.')
+    settings.slope_min = slope_min if slope_min > 0 else None
     settings.ewr_max = EWR_MAX_DEFAULT
 
 
@@ -255,7 +264,8 @@ def analyze_abundances(abu_file: str, settings: MergeSettings, external_feh: tup
         # COG slope (-4), or reduced EW only with --ewr; lines without EW (99.99) are not judged
         for i in np.where(has_abu)[0]:
             flag_line[i] = ew_selection_flag(df['ew'].iat[i], df['line'].iat[i], df['slope'].iat[i],
-                                             settings.ewr_min, settings.ewr_max, settings.slope_min)
+                                             settings.ewr_min, settings.ewr_max, settings.slope_min,
+                                             df['sigma_fit'].iat[i], settings.sigma_max)
         flag_line[has_abu & (EP != 99.999) & ((EP < settings.ep[0]) | (EP > settings.ep[1]))] = -2
         if settings.slope_min is not None:      # saturated lines of the species without other lines
             flag_line = use_saturated_species(nelem, flag_line, label=ID)
@@ -291,7 +301,10 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
                         help='reduced EW limits, log(EW/lambda), instead of the COG slope (as EWR_MAX; with --flags recalc)')
     parser.add_argument('--ewr-min', type=float, metavar='MIN', help='minimum reduced EW (with --slope-min; with --flags recalc)')
     parser.add_argument('--slope-min', type=float, metavar='S',
-                        help=f'minimum slope of the curve of growth (as COG_SLOPE_MIN, e.g. {DEFAULT_SLOPE_MIN}; with --flags recalc)')
+                        help=f'minimum slope of the curve of growth (as COG_SLOPE_MIN, e.g. {DEFAULT_SLOPE_MIN}; 0 = not used; with --flags recalc)')
+    parser.add_argument('--sigma-fit-max', type=float, metavar='DEX', default=DEFAULT_SIGMA_MAX,
+                        help=f'largest error of the abundance due to the noise of the profile (as SIGMA_FIT_MAX, '
+                             f'default {DEFAULT_SIGMA_MAX}; 0 = not used; with --flags recalc)')
     parser.add_argument('--version', action='version', version=f'salvador {__version__}')
     args = parser.parse_args(argv)
     if args.sclip is not None and args.sclip <= 0:
@@ -304,6 +317,8 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
         parser.error('--ewr (selection by the reduced EW) cannot be used with --slope-min or --ewr-min')
     if args.slope_min is not None and args.slope_min < 0:
         parser.error('--slope-min cannot be negative')
+    if args.sigma_fit_max < 0:
+        parser.error('--sigma-fit-max cannot be negative')
     return args
 
 

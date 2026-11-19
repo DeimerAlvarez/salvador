@@ -7,5 +7,5 @@
 #E_PARAM	= atmospheric params error. Sum in quadrature of error due to Teff, logg, and vt 
 #--------------------------------------------------------------------------------------------------------------
 #STAR                            CODE  N_LIN   ISOR  ERROR  E_INT  E_PARAM
-CS29497-034_C_rv                 6.00      1      5      1      1    999
+CS29497-034_C_rv                 6.00      1      5      0      0    999
 #---------------------------------------

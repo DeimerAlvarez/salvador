@@ -4,12 +4,14 @@
 #   FLAG = -2  (REJ. E.P.)
 #   FLAG = -3  (REJ. ABU)
 #   FLAG = -4  (REJ. COG SLOPE)
-#   SELECTION: EWR >= -6.00 and COG slope >= 0.35 (EWR <= -4.40 for the very strong lines; saturated lines used only for the species without other lines)
+#   FLAG = -5  (REJ. PROFILE SENSITIVITY)
+#   SELECTION: EWR from -6.00 to -4.40; profile error <= 0.20 dex (COG slope not used)
 #   EWR = log(EW/lambda); SLOPE = d log(EW/lambda) / d A(X) from K2 (99.999 = not available)
+#   SIGFIT = error of ABU due to the noise of the profile [dex] (99.999 = not available)
 #---------------------------------------
-#SPECTRUM                           LINE   ELEM    ABU      EW     EWR   SLOPE      EP  log_gf    eMC  flag_line
-M54_HR18_1500138                7461.519  26.00   6.15   51.75   -5.16   0.738   2.559  -3.585   0.01   1
-M54_HR18_1500138                7489.578  22.00   3.85   16.92   -5.65   0.965   2.249  -0.910   0.02   1
-M54_HR18_1500138                7496.103  22.00  99.99   99.99   99.99  99.999  99.999  99.999  99.99  -3
-M54_HR18_1500138                7555.597  28.00   4.53   81.11   -4.97   0.540   3.847   0.054   0.01   1
-M54_HR18_1500138                7711.721  26.01   5.89   29.40   -5.42   0.905   3.903  -2.500   0.02   1
+#SPECTRUM                           LINE   ELEM    ABU      EW     EWR   SLOPE  SIGFIT      EP  log_gf    eMC  flag_line
+M54_HR18_1500138                7461.519  26.00   6.15   51.75   -5.16   0.738   0.012   2.559  -3.585   0.01   1
+M54_HR18_1500138                7489.578  22.00   3.85   16.92   -5.65   0.965   0.023   2.249  -0.910   0.01   1
+M54_HR18_1500138                7496.103  22.00  99.99   99.99   99.99  99.999  99.999  99.999  99.999  99.99  -3
+M54_HR18_1500138                7555.597  28.00   4.53   81.11   -4.97   0.540   0.014   3.847   0.054   0.01   1
+M54_HR18_1500138                7711.721  26.01   5.89   29.40   -5.42   0.905   0.027   3.903  -2.500   0.01   1

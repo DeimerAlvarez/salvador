@@ -4,9 +4,11 @@
 #   FLAG = -2  (REJ. E.P.)
 #   FLAG = -3  (REJ. ABU)
 #   FLAG = -4  (REJ. COG SLOPE)
-#   SELECTION: EWR from -6.00 to -4.40 (COG slope not used)
+#   FLAG = -5  (REJ. PROFILE SENSITIVITY)
+#   SELECTION: EWR from -6.00 to -4.40; profile error <= 0.20 dex (COG slope not used)
 #   EWR = log(EW/lambda); SLOPE = d log(EW/lambda) / d A(X) from K2 (99.999 = not available)
+#   SIGFIT = error of ABU due to the noise of the profile [dex] (99.999 = not available)
 #---------------------------------------
-#SPECTRUM                           LINE   ELEM    ABU      EW     EWR   SLOPE      EP  log_gf    eMC  d_Teff d_logg  d_vt  flag_line
-star10uc                        8804.624  26.00   6.45  145.58   -4.78   0.337   2.279  -3.234   0.03   0.07  99.99  -0.05   1
-star10uc                        8806.756  12.00   7.02   99.99   99.99  99.999  99.999  99.999   0.02   0.02  99.99   0.00   1
+#SPECTRUM                           LINE   ELEM    ABU      EW     EWR   SLOPE  SIGFIT      EP  log_gf    eMC  d_Teff d_logg  d_vt  flag_line
+star10uc                        8804.624  26.00   6.45  145.58   -4.78   0.337   0.014   2.279  -3.234   0.01   0.07  99.99  -0.05   1
+star10uc                        8806.756  12.00   7.02   99.99   99.99  99.999   0.006  99.999  99.999   0.01   0.02  99.99   0.00   1

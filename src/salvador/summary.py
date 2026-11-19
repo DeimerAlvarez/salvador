@@ -1,6 +1,7 @@
 """Final abundances of a star: mean, sigma-clipping and errors (extract_abu*), the rows of
 abundance_final.txt (star_abundance_rows, also used by salvador-merge), the selection of the lines
-by their strength (ew_selection_flag, also used by salvador-merge), linear fits."""
+by their strength and by the sensitivity of their profile (ew_selection_flag, also used by
+salvador-merge), the check of the saturated lines (saturation_check), linear fits."""
 import numpy as np
 from scipy import stats
 from astropy.stats import mad_std
@@ -13,6 +14,9 @@ MISSING = 99.99     # value not available (in the .fit files and in the results)
 MISSING_SLOPE = 99.999      # COG slope not available (grid, molecules, K2 could not compute it)
 FLAG_EW = -1        # rejected by the reduced EW (EWR_MIN, EWR_MAX)
 FLAG_SLOPE = -4     # NEW (1.4.0): rejected by the slope of the curve of growth (COG_SLOPE_MIN)
+FLAG_SIGMA = -5     # NEW: rejected by the sensitivity of the profile to the abundance (SIGMA_FIT_MAX)
+MISSING_SIGMA = 99.999      # profile error not available (no SNR, no synthetics around the fit)
+SATURATION_SLOPE = 0.35     # NEW: COG slope that separates the saturated lines in saturation_check
 
 
 def reduced_ew(ew: float, line: float) -> float:
@@ -27,39 +31,82 @@ def slope_available(slope: float) -> bool:
     return bool(np.isfinite(slope)) and slope != MISSING_SLOPE
 
 
+def sigma_available(sigma: float) -> bool:
+    """True if the profile error is a number (not 99.999 and not NaN)."""
+    return bool(np.isfinite(sigma)) and sigma != MISSING_SIGMA
+
+
 def ew_selection_flag(ew: float, line: float, slope: float, ewr_min: float, ewr_max: float,
-                      slope_min: float | None) -> int:
-    """Flag of a line from its strength: 0 (kept), FLAG_EW (-1) or FLAG_SLOPE (-4).
+                      slope_min: float | None, sigma_fit: float = MISSING_SIGMA,
+                      sigma_max: float | None = None) -> int:
+    """Flag of a line from its strength and from the sensitivity of its profile: 0 (kept),
+    FLAG_EW (-1), FLAG_SIGMA (-5) or FLAG_SLOPE (-4), checked in this order.
 
     NEW (1.4.0). The line is rejected (-1) if its reduced EW, log(EW/lambda), is below ewr_min or
-    above ewr_max, or if the EW is 0 (K2 did not find the line); then, if slope_min is given, it is
-    rejected (-4) if the slope of its curve of growth is below slope_min. A line without EW (99.99)
-    is not judged; a line without slope (99.999 or NaN) is judged only by its reduced EW.
+    above ewr_max, or if the EW is 0 (K2 did not find the line); NEW: then, if sigma_max is given,
+    it is rejected (-5) if the error of its abundance due to the noise of the profile is larger
+    than sigma_max (the profile hardly changes with the abundance); then, if slope_min is given,
+    it is rejected (-4) if the slope of its curve of growth is below slope_min. A line without EW
+    (99.99) is not judged by its strength; a line without slope or profile error (99.999 or NaN)
+    is not judged by them.
 
     Args:
         ew: Equivalent width [mA] (99.99 = not available).
         line: Wavelength [A].
         slope: Slope of the curve of growth, d log(EW/lambda) / d A(X) (99.999 = not available).
         ewr_min, ewr_max: Limits of the reduced EW.
-        slope_min: Minimum slope, or None to select by the reduced EW only (EWR_MAX given).
+        slope_min: Minimum slope, or None (not used: default, or EWR_MAX given).
+        sigma_fit: Error of the abundance due to the noise of the profile [dex] (99.999 = not available).
+        sigma_max: Largest sigma_fit, or None (not used).
     """
-    if ew == MISSING:
-        return 0
-    ewr = reduced_ew(ew, line)
-    if ewr == MISSING or not ewr_min <= ewr <= ewr_max:
-        return FLAG_EW
-    if slope_min is not None and slope_available(slope) and slope < slope_min:
+    if ew != MISSING:
+        ewr = reduced_ew(ew, line)
+        if ewr == MISSING or not ewr_min <= ewr <= ewr_max:
+            return FLAG_EW
+    if sigma_max is not None and sigma_available(sigma_fit) and sigma_fit > sigma_max:
+        return FLAG_SIGMA
+    if ew != MISSING and slope_min is not None and slope_available(slope) and slope < slope_min:
         return FLAG_SLOPE
     return 0
 
 
-def describe_ew_selection(ewr_min: float, ewr_max: float, slope_min: float | None) -> str:
-    """One line describing the selection of the lines by their strength (printed and written in
-    the header of the .fit files)."""
+def describe_ew_selection(ewr_min: float, ewr_max: float, slope_min: float | None,
+                          sigma_max: float | None = None) -> str:
+    """One line describing the selection of the lines by their strength and by the sensitivity
+    of their profile (printed and written in the header of the .fit files)."""
+    sigma = f'; profile error <= {sigma_max:.2f} dex' if sigma_max is not None else ''
     if slope_min is None:
-        return f'EWR from {ewr_min:.2f} to {ewr_max:.2f} (COG slope not used)'
+        return f'EWR from {ewr_min:.2f} to {ewr_max:.2f}{sigma} (COG slope not used)'
     return (f'EWR >= {ewr_min:.2f} and COG slope >= {slope_min:.2f} (EWR <= {ewr_max:.2f} for the very strong lines; '
-            f'saturated lines used only for the species without other lines)')
+            f'saturated lines used only for the species without other lines){sigma}')
+
+
+def saturation_check(abu: np.ndarray, slope: np.ndarray, slope_ref: float = SATURATION_SLOPE,
+                     min_lines: int = 2) -> tuple[int, int, float, float] | None:
+    """NEW: mean abundance of the saturated lines (COG slope < slope_ref) minus that of the other
+    lines of the same species. The saturated lines are more sensitive to the microturbulence and
+    to the damping: a clear difference suggests to check them (e.g. a too high vt gives lower
+    abundances from the saturated lines).
+
+    Args:
+        abu: Abundances of the usable lines of one species (99.99 = not available).
+        slope: Their COG slopes (99.999 = not available).
+        slope_ref: Slope below which a line is saturated.
+        min_lines: Minimum number of lines in each group.
+
+    Returns:
+        (number of saturated lines, number of the others, difference of the means [dex], its error
+        [dex] from the scatter of each group), or None if a group has fewer than min_lines lines.
+    """
+    abu = np.asarray(abu, dtype=float)
+    slope = np.asarray(slope, dtype=float)
+    ok = (abu != MISSING) & np.isfinite(abu) & np.isfinite(slope) & (slope != MISSING_SLOPE)
+    sat, other = abu[ok & (slope < slope_ref)], abu[ok & (slope >= slope_ref)]
+    if sat.size < min_lines or other.size < min_lines:
+        return None
+    diff = float(np.mean(sat) - np.mean(other))
+    err = float(np.sqrt(np.var(sat, ddof=1) / sat.size + np.var(other, ddof=1) / other.size))
+    return int(sat.size), int(other.size), diff, err
 
 
 def use_saturated_species(nelem: np.ndarray, flag_line: np.ndarray, label: str = '') -> np.ndarray:

@@ -19,7 +19,7 @@ The atmospheric parameters must be known: salvador does not determine them.
 It works in automatic or interactive mode, analyses several lines in parallel (automatic mode),
 and writes a PDF with the fit of every line.
 
-> **Status:** 1.4.0. The full manual is [docs/salvador_instructions.pdf](docs/salvador_instructions.pdf).
+> **Status:** 1.5.0. The full manual is [docs/salvador_instructions.pdf](docs/salvador_instructions.pdf).
 
 
 ## Requirements
@@ -28,7 +28,7 @@ and writes a PDF with the fit of every line.
 * **K2 and the Kurucz codes**, to compute the synthetic spectra (not needed if you only use a
   grid of precomputed synthetics, keyword `PATH_SYN`). K2 will be distributed from the
   [KOALA software page](https://sites.google.com/view/koala-database/software); follow its
-  instructions. The command `k2.py` must be in your `PATH`. salvador 1.4.0 needs the version of K2
+  instructions. The command `k2.py` must be in your `PATH`. salvador 1.4.0 (or later) needs the version of K2
   of November 2026 (or later), which gives the slope of the curve of growth of each line.
 * The Python packages (numpy, scipy, pandas, matplotlib, astropy, specutils ≥ 2.0, PyAstronomy,
   pypdf) are installed automatically by `pip`.
@@ -119,16 +119,19 @@ given on the command line; those that are missing are asked:
 ```bash
 salvador-merge                                   # everything asked, as in the previous versions
 salvador-merge list.txt --solar 1 --flags keep   # use the flags of the .fit files
+salvador-merge list.txt --solar 1 --flags recalc --sclip 2.5 --ep 0 10 --ewr-min -6 --slope-min 0
 salvador-merge list.txt --solar 1 --flags recalc --sclip 2.5 --ep 0 10 --ewr-min -6 --slope-min 0.35
 salvador-merge list.txt --solar 1 --flags recalc --sclip 2.5 --ep 0 10 --ewr -6 -4.4
 ```
 
 `--solar`: 1 = Caffau & Lodders, 2 = Grevesse & Sauval 1998, 3 = Magg et al. 2022, 4 = Asplund et
 al. 2009. `--flags recalc` recalculates the flags (EP limits, selection of the strong lines,
-sigma-clipping); `keep` uses those of the `.fit` files. The strong lines are rejected by the slope
-of the curve of growth (`--ewr-min`, `--slope-min`, as `EWR_MIN` and `COG_SLOPE_MIN`) or, with
-`--ewr MIN MAX`, by the reduced EW (as `EWR_MAX`); as in `salvador`, the saturated lines of a
-species without other usable lines are kept. The `.fit` files of any version can be merged (they
+sigma-clipping); `keep` uses those of the `.fit` files. The lines are selected by the minimum
+reduced EW and, if given, the slope of the curve of growth (`--ewr-min`, `--slope-min`, as
+`EWR_MIN` and `COG_SLOPE_MIN`; `--slope-min 0`: not used, the default of `salvador` since 1.5.0)
+or, with `--ewr MIN MAX`, by the reduced EW (as `EWR_MAX`), and in both cases by the error due to
+the noise of the profile (`--sigma-fit-max`, as `SIGMA_FIT_MAX`, default 0.20 dex); as in
+`salvador`, the saturated lines of a species without other usable lines are kept. The `.fit` files of any version can be merged (they
 are read by the names of their columns). The abundances are computed with the same functions
 as `salvador`.
 

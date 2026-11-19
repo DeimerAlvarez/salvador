@@ -439,7 +439,7 @@ def measure_line(wvl, flux, sss, fit1, fit2, elem, param1, name_star, abu, wv_le
     def abundance_result(answer, ew_k2, EP, loggf, slope, abu_err_mc):
         """Result of an abundance (or isotopic ratio) line, as read by salvador.py."""
         return {"abu_fin": abu_fin, "answer": answer, "ew_k2": ew_k2, "snr": snr, "abu_err_mc": abu_err_mc, "abu0": abu0, "EP": EP, "loggf": loggf,
-                "slope": slope}
+                "slope": slope, "sigma_fit": plot_data.get('sigma_fit', 99.999) if plot_data else 99.999}
 
     def rotation_result(answer):
         """Result of a ROTAT line (last fit; 99.99 if rejected), as read by salvador.py."""

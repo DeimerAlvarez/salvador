@@ -74,18 +74,23 @@ def test_selection_settings(tmp_path):
     base = 'OBS = a\nNORM = 1\nWINDOW = 10\nINTER = n\nSCLIP = 3\n'
     (tmp_path / 'in').write_text(base)
     config = load_config(tmp_path / 'in')
-    assert config.cog_slope_min == 0.35 and config.ewr_max is None
-    assert config.ew_selection() == (-6.0, EWR_MAX_DEFAULT, 0.35)            # default: COG slope
+    assert config.cog_slope_min is None and config.ewr_max is None
+    assert config.ew_selection() == (-6.0, EWR_MAX_DEFAULT, None)            # default: no COG slope
+    assert config.sigma_selection() == 0.20                                  # default: profile error
+    (tmp_path / 'in').write_text(base + 'COG_SLOPE_MIN = 0.35\nSIGMA_FIT_MAX = 0\n')
+    config = load_config(tmp_path / 'in')
+    assert config.ew_selection() == (-6.0, EWR_MAX_DEFAULT, 0.35) and config.sigma_selection() is None
     (tmp_path / 'in').write_text(base + 'EWR_MAX = -4.6\nCOG_SLOPE_MIN = 0.4\n')
     assert load_config(tmp_path / 'in').ew_selection() == (-6.0, -4.6, None)  # EWR_MAX replaces the slope
     grid = Config(input_stars='a', type_norm=1, window=10, inter='n', sclip=3, path_syn='list.syn')
     assert grid.ew_selection() == (-6.0, EWR_MAX_DEFAULT, None)              # grid: no slope
-    for bad in ('COG_SLOPE_MIN = -0.1', 'EWR_MAX = -7'):
+    for bad in ('COG_SLOPE_MIN = -0.1', 'EWR_MAX = -7', 'SIGMA_FIT_MAX = -0.1'):
         (tmp_path / 'in').write_text(base + bad + '\n')
         with pytest.raises(SystemExit):
             load_config(tmp_path / 'in')
     assert 'COG slope >= 0.35' in describe_ew_selection(-6.0, -4.4, 0.35)
     assert 'COG slope not used' in describe_ew_selection(-6.0, -4.6, None)
+    assert 'profile error <= 0.20 dex' in describe_ew_selection(-6.0, -4.4, None, 0.20)
 
 
 def test_feh_without_usable_fe_lines(settings):
@@ -196,10 +201,10 @@ def test_merge_old_and_new_fit_files(tmp_path):
     assert proc.returncode == 0, proc.stdout + proc.stderr
     assert 'without the COG slope' in proc.stdout
     header = [r for r in (tmp_path / 'merged.fit').read_text().splitlines() if r.startswith('#SPECTRUM')][0]
-    assert header.split()[5:7] == ['EWR', 'SLOPE'] and 'COG slope >= 0.75' in (tmp_path / 'merged.fit').read_text()
+    assert header.split()[5:8] == ['EWR', 'SLOPE', 'SIGFIT'] and 'COG slope >= 0.75' in (tmp_path / 'merged.fit').read_text()
     merged = {r[1]: r for r in rows(tmp_path / 'merged.fit')}
-    assert len(merged) == 7 and all(len(r) == 14 for r in merged.values())
-    assert merged['6000.000'][5:7] == ['-5.00', '99.999'] and merged['6000.000'][-1] == '1'   # old: EWR only
+    assert len(merged) == 7 and all(len(r) == 15 for r in merged.values())
+    assert merged['6000.000'][5:8] == ['-5.00', '99.999', '99.999'] and merged['6000.000'][-1] == '1'   # old: EWR only
     assert merged['7461.519'][-1] == '-4'      # Fe I, slope 0.738 < 0.75: rejected (6000.000 is usable)
     assert merged['7555.597'][-1] == '1'       # Ni I, slope 0.540: the only Ni line, used anyway
     assert 'Ni (28.00): all its lines are saturated' in proc.stdout
@@ -209,8 +214,8 @@ def test_regression_by_column_names(tmp_path, monkeypatch, capsys):
     # reference written by 1.3.0 (no EWR, SLOPE), results of 1.4.0: the common columns are compared
     monkeypatch.chdir(tmp_path)
     new = (EXPECTED_SUBSET / f'{STAR}.fit').read_text()
-    old = '\n'.join(r.replace('     EWR   SLOPE', '') if r.startswith('#') else
-                    ' '.join(f for i, f in enumerate(r.split()) if i not in (5, 6)) for r in new.splitlines()) + '\n'
+    old = '\n'.join(r.replace('     EWR   SLOPE  SIGFIT', '') if r.startswith('#') else
+                    ' '.join(f for i, f in enumerate(r.split()) if i not in (5, 6, 7)) for r in new.splitlines()) + '\n'
     (tmp_path / f'{STAR}.fit').write_text(old)
     monkeypatch.setattr('sys.argv', ['salvador-regression', 'save'])
     assert regression_check.main() == 0
@@ -218,7 +223,7 @@ def test_regression_by_column_names(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr('sys.argv', ['salvador-regression'])
     assert regression_check.main() == 0
     out = capsys.readouterr().out
-    assert 'columns only in this run: EWR, SLOPE' in out and 'ALL RESULTS IDENTICAL' in out
+    assert 'columns only in this run: EWR, SLOPE, SIGFIT' in out and 'ALL RESULTS IDENTICAL' in out
 
 
 # ------------------------------------------------------------------ K2 linelist file
@@ -228,9 +233,11 @@ def test_linelist_comments_and_lowercase_markers(tmp_path):
 
 
 # ------------------------------------------------------------------ complete runs (stand-in for K2)
-def subset_run(path, nproc='2', **env_extra):
+def subset_run(path, nproc='2', slope_min=None, **env_extra):
     env = prepare_subset(path)
     set_keyword(path, 'NPROC', nproc)
+    if slope_min is not None:
+        set_keyword(path, 'COG_SLOPE_MIN', slope_min)
     return run_salvador(path, {**env, **env_extra})
 
 
@@ -247,7 +254,7 @@ def test_saturated_species_are_used(tmp_path):
     # every line saturated (slope 0.20): flag -4, but each species of the subset has no other usable
     # line, so they are all used anyway: the results are those of the reference run
     path = tmp_path / 'run'
-    run = subset_run(path, FAKE_K2_SLOPE='0.20')
+    run = subset_run(path, slope_min='0.35', FAKE_K2_SLOPE='0.20')
     assert run.returncode == 0, run.output
     assert run.output.count('all its lines are saturated') == 4          # Fe, Ti, Ni, FeII
     assert 'Fe (26.00): all its lines are saturated (COG slope < COG_SLOPE_MIN): 1 line(s) used anyway' in run.output
@@ -266,29 +273,31 @@ def test_parameter_errors_of_saturated_lines(tmp_path, slope):
     env = prepare_subset(path)
     stars = path / 'lista.stars'
     stars.write_text(stars.read_text().rstrip('\n') + ' 0.2\n')
+    set_keyword(path, 'COG_SLOPE_MIN', '0.35')
     run = run_salvador(path, {**env, **({'FAKE_K2_SLOPE': slope} if slope else {})})
     assert run.returncode == 0, run.output
     header = [r for r in (path / f'{STAR}.fit').read_text().splitlines() if r.startswith('#SPECTRUM')][0].split()
-    assert header[10:13] == ['d_Teff', 'd_logg', 'd_vt']
+    assert header[11:14] == ['d_Teff', 'd_logg', 'd_vt']
     for r in rows(path / f'{STAR}.fit'):
         if r[3] != '99.99':
-            assert r[10:12] == ['99.99', '99.99'], r                     # Teff and logg: attempted
-            assert r[12] == ('99.99' if float(r[4]) > 50 else '0.00'), r  # vt only for EW > 50 mA
+            assert r[11:13] == ['99.99', '99.99'], r                     # Teff and logg: attempted
+            assert r[13] == ('99.99' if float(r[4]) > 50 else '0.00'), r  # vt only for EW > 50 mA
 
 
 def test_ewr_max_replaces_the_slope(tmp_path):
     path = tmp_path / 'run'
     env = prepare_subset(path)
     set_keyword(path, 'EWR_MAX', '-4.4')
+    set_keyword(path, 'COG_SLOPE_MIN', '0.35')
     run = run_salvador(path, {**env, 'FAKE_K2_SLOPE': '0.20'})
     assert run.returncode == 0, run.output
-    assert 'EWR from -6.00 to -4.40 (COG slope not used)' in run.output
+    assert 'EWR from -6.00 to -4.40; profile error <= 0.20 dex (COG slope not used)' in run.output
     assert [r[:6] + r[7:] for r in rows(path / f'{STAR}.fit')] == [r[:6] + r[7:] for r in rows(EXPECTED_SUBSET / f'{STAR}.fit')]
 
 
 def test_missing_slope_uses_the_ewr_limits(tmp_path):
     path = tmp_path / 'run'
-    run = subset_run(path, '1', FAKE_K2_SLOPE='nan')
+    run = subset_run(path, '1', slope_min='0.35', FAKE_K2_SLOPE='nan')
     assert run.returncode == 0, run.output
     assert 'K2 gave no COG slope' in run.output
     assert [r[-1] for r in rows(path / f'{STAR}.fit')] == [r[-1] for r in rows(EXPECTED_SUBSET / f'{STAR}.fit')]
